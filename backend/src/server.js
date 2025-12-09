@@ -1,52 +1,57 @@
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import cors from '@fastify/cors';
 
 import cardRoutes from './routes/card.routes.js';
-import customerRoutes from "./routes/customer.routes.js";
-
+import customerRoutes from './routes/customer.routes.js';
 
 dotenv.config();
 
 const fastify = Fastify({
-  logger: true
+  logger: true,
 });
 
-//Pripojení k MongoDB
+//MongoDB URL z env
 const mongoUri = process.env.MONGODB_URI;
 
 if (!mongoUri) {
-  console.error('? Chybí MONGODB_URI v .env souboru');
+  fastify.log.error('? Chybí MONGODB_URI v env promenných');
   process.exit(1);
 }
 
-mongoose
-  .connect(mongoUri)
-  .then(() => console.log('MongoDB pripojena'))
-  .catch((err) => {
-    console.error('Chyba MongoDB:', err);
-    process.exit(1);
-  });
-
-//Základní test endpoint
-fastify.get('/', async () => {
-  return { status: 'Pluxeo API bezi' };
-});
-
-//Registrace routes pro karty
-fastify.register(cardRoutes);
-fastify.register(customerRoutes);
-
-//Start serveru
 const start = async () => {
   try {
+    // Pripojení k MongoDB
+    await mongoose.connect(mongoUri);
+    fastify.log.info('? MongoDB pripojena');
+
+    // CORS – povolíme FE na Vercelu + lokální dev
+    await fastify.register(cors, {
+      origin: [
+        'http://localhost:5173',              // Vite dev
+        'https://merchant.pluxeo.vercel.app', // tady pak dej reálnou URL frontendu
+      ],
+      methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+    });
+
+    // Routes
+    fastify.get('/', async () => {
+      return { status: 'Pluxeo API bezi' };
+    });
+
+    fastify.register(cardRoutes);
+    fastify.register(customerRoutes);
+
+    // Start serveru
     const port = process.env.PORT || 3000;
     await fastify.listen({ port, host: '0.0.0.0' });
-    console.log(`Server beží na portu ${port}`);
+    fastify.log.info(`?? Server bezi na portu ${port}`);
   } catch (err) {
-    fastify.log.error(err);
+    fastify.log.error(err, 'Chyba pri startu serveru');
     process.exit(1);
   }
 };
 
 start();
+
