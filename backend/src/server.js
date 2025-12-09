@@ -1,3 +1,4 @@
+// src/server.js
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
@@ -12,7 +13,7 @@ const fastify = Fastify({
   logger: true,
 });
 
-//MongoDB URL z env
+// MongoDB URL z env
 const mongoUri = process.env.MONGODB_URI;
 
 if (!mongoUri) {
@@ -26,20 +27,19 @@ const start = async () => {
     await mongoose.connect(mongoUri);
     fastify.log.info('? MongoDB pripojena');
 
-    // CORS – povolíme FE na Vercelu + lokální dev
+    // CORS – pro vývoj povolíme všechny originy
     await fastify.register(cors, {
-      origin: [
-        'http://localhost:5173',              // Vite dev
-        'https://merchant.pluxeo.vercel.app', // tady pak dej reálnou URL frontendu
-      ],
+      origin: true, // vrátí Access-Control-Allow-Origin dle originu requestu
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
+      allowedHeaders: ['Content-Type', 'X-Api-Key'],
     });
 
-    // Routes
+    // Health-check / test endpoint
     fastify.get('/', async () => {
       return { status: 'Pluxeo API bezi' };
     });
 
+    // Routes
     fastify.register(cardRoutes);
     fastify.register(customerRoutes);
 
@@ -48,10 +48,9 @@ const start = async () => {
     await fastify.listen({ port, host: '0.0.0.0' });
     fastify.log.info(`?? Server bezi na portu ${port}`);
   } catch (err) {
-    fastify.log.error(err, 'Chyba pri startu serveru');
+    fastify.log.error(err, '? Chyba pri startu serveru');
     process.exit(1);
   }
 };
 
 start();
-
