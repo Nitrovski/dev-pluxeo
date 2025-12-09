@@ -4,17 +4,19 @@ import { Merchant } from "../models/merchant.model.js";
 
 const SALT_ROUNDS = 10;
 
-async function authRoutes(fastify, options) {
+export default async function authRoutes(fastify, options) {
   /**
    * POST /api/auth/merchants/register
-   * Registrace nového obchodníka
+   * regustrace noveho obchodnika
    */
   fastify.post("/api/auth/merchants/register", async (request, reply) => {
     try {
       const { name, email, password } = request.body;
 
       if (!name || !email || !password) {
-        return reply.code(400).send({ error: "Missing name, email or password" });
+        return reply
+          .code(400)
+          .send({ error: "Missing name, email or password" });
       }
 
       const existing = await Merchant.findOne({ email });
@@ -50,7 +52,6 @@ async function authRoutes(fastify, options) {
 
   /**
    * POST /api/auth/merchants/login
-   * Prihlášení obchodníka
    */
   fastify.post("/api/auth/merchants/login", async (request, reply) => {
     try {
@@ -65,7 +66,10 @@ async function authRoutes(fastify, options) {
         return reply.code(401).send({ error: "Invalid credentials" });
       }
 
-      const passwordMatch = await bcrypt.compare(password, merchant.passwordHash);
+      const passwordMatch = await bcrypt.compare(
+        password,
+        merchant.passwordHash
+      );
       if (!passwordMatch) {
         return reply.code(401).send({ error: "Invalid credentials" });
       }
@@ -88,18 +92,15 @@ async function authRoutes(fastify, options) {
 
   /**
    * GET /api/auth/merchants/me
-   * Test chráneného endpointu
+   * – test chránené route
    */
   fastify.get(
     "/api/auth/merchants/me",
     {
-      preHandler: [fastify.authenticate],
+      preHandler: [fastify.authenticate], // ? tady bylo undefined
     },
     async (request, reply) => {
-      // request.merchant jsme nastavili v auth pluginu
       return reply.send({ merchant: request.merchant });
     }
   );
 }
-
-export default authRoutes;

@@ -2,10 +2,10 @@
 import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
-const JWT_EXPIRES_IN = "7d"; // mužeš upravit
+const JWT_EXPIRES_IN = "7d";
 
 export default async function authPlugin(fastify, options) {
-  // Dekorace – aby byl secret dostupný všude
+  // Podpis JWT pro merchanta
   fastify.decorate("jwtSignMerchant", (merchant) => {
     return jwt.sign(
       {
@@ -18,6 +18,7 @@ export default async function authPlugin(fastify, options) {
     );
   });
 
+  // Middleware pro overení tokenu
   fastify.decorate("authenticate", async function (request, reply) {
     try {
       const authHeader = request.headers["authorization"];
@@ -29,7 +30,6 @@ export default async function authPlugin(fastify, options) {
       const token = authHeader.split(" ")[1];
       const decoded = jwt.verify(token, JWT_SECRET);
 
-      // Uložíme info o merchantovi do requestu
       request.merchant = {
         id: decoded.sub,
         email: decoded.email,
