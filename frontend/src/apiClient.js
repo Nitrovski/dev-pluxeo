@@ -1,23 +1,34 @@
 // src/apiClient.js
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:3000";
+// Musí být nastavena na Vercelu jako VITE_API_BASE_URL = https://tvuj-backend.onrender.com
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+if (!API_BASE_URL) {
+  console.error("? Chybí VITE_API_BASE_URL – nastav ho ve Vercel Environment Variables.");
+}
 
 /**
  * Obecný wrapper na fetch, který:
  *  - pridá API key do hlavicek
  *  - zpracuje JSON response
  */
-export async function apiRequest(path, { method = "GET", apiKey, body } = {}) {
+export async function apiRequest(
+  path,
+  { method = "GET", apiKey, body } = {}
+) {
   if (!apiKey) {
     throw new Error("API key není nastavený.");
+  }
+
+  if (!API_BASE_URL) {
+    throw new Error("VITE_API_BASE_URL není nastavený ve Vercelu.");
   }
 
   const url = `${API_BASE_URL}${path}`;
 
   const headers = {
     "Content-Type": "application/json",
-    // pokud máš v backendu jinou hlavicku, tady to prejmenuj:
-    "x-api-key": apiKey,
+    "x-api-key": apiKey, // tvoje API key hlavicka
   };
 
   const res = await fetch(url, {
@@ -33,9 +44,10 @@ export async function apiRequest(path, { method = "GET", apiKey, body } = {}) {
 
   if (!res.ok) {
     const message =
-      (data && data.message) ||
+      data?.message ||
       data?.error ||
-      `Request failed with status ${res.status}`;
+      `Server vrátil chybu ${res.status}`;
+
     const error = new Error(message);
     error.status = res.status;
     error.data = data;
