@@ -40,6 +40,29 @@ async function cardRoutes(fastify, options) {
       }
     }
   );
+  
+  /**
+ * GET /api/cards
+ * Vrátí všechny karty aktuálního merchanta
+ */
+fastify.get(
+  "/api/cards",
+  {
+    preHandler: [fastify.authenticate],
+  },
+  async (request, reply) => {
+    try {
+      const merchantId = request.merchant.id;
+
+      const cards = await Card.find({ merchantId }).lean();
+
+      return reply.send(cards);
+    } catch (err) {
+      request.log.error(err, "Error fetching cards");
+      return reply.code(500).send({ error: "Error fetching cards" });
+    }
+  }
+);
 
   /**
    * GET /api/cards/:id
