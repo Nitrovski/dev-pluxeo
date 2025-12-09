@@ -31,34 +31,43 @@ async function customerRoutes(fastify, options) {
       return reply.code(500).send({ error: "Error fetching customer" });
     }
   });
-}
 
- // update obsahu karty
-  fastify.patch("/api/customers/:customerId/card-content", async (request, reply) => {
-    try {
-      const { customerId } = request.params;
-      const payload = request.body || {};
+  // Update obsahu karty
+  fastify.patch(
+    "/api/customers/:customerId/card-content",
+    async (request, reply) => {
+      try {
+        const { customerId } = request.params;
+        const payload = request.body || {};
 
-      const customer = await Customer.findOne({ customerId });
-      if (!customer) {
-        return reply.code(404).send({ error: "Customer not found" });
+        const customer = await Customer.findOne({ customerId });
+        if (!customer) {
+          return reply.code(404).send({ error: "Customer not found" });
+        }
+
+        // Bezpecné sloucení stávajícího cardContent + payload
+        const existingContent =
+          customer.cardContent && typeof customer.cardContent === "object"
+            ? customer.cardContent
+            : {};
+
+        customer.cardContent = {
+          ...existingContent,
+          ...payload,
+          lastUpdatedAt: new Date(),
+        };
+
+        await customer.save();
+
+        return reply.send(customer.cardContent);
+      } catch (err) {
+        request.log.error(err, "Error updating card content");
+        return reply
+          .code(500)
+          .send({ error: "Error updating card content" });
       }
-
-      // jen prepíšeme to, co prišlo (MVP – bez extra validace)
-      customer.cardContent = {
-        ...customer.cardContent?.toObject?.(),
-        ...payload,
-        lastUpdatedAt: new Date(),
-      };
-
-      await customer.save();
-
-      return reply.send(customer.cardContent);
-    } catch (err) {
-      request.log.error(err, "Error updating card content");
-      return reply.code(500).send({ error: "Error updating card content" });
     }
-  });
+  );
 }
 
 export default customerRoutes;
