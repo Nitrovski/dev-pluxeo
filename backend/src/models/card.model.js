@@ -4,14 +4,22 @@ const { Schema, model } = mongoose;
 
 const CardSchema = new Schema(
   {
-    // Verejné ID zákazníka (kavárny apod.), které máme už ted v requestu
+    // ID merchanta, kterému karta patrí
+    merchantId: {
+      type: Schema.Types.ObjectId,
+      ref: "Merchant",
+      required: true,
+      index: true,
+    },
+
+    // Verejné ID zákazníka (kavárny apod.)
     customerId: {
       type: String,
       required: true,
       index: true,
     },
 
-    // Token z Apple/Google Wallet (nebo náš vlastní unikátní identifikátor)
+    // Token z Apple/Google Wallet nebo náš unikátní identifikátor
     walletToken: {
       type: String,
       required: true,
@@ -24,19 +32,19 @@ const CardSchema = new Schema(
       default: 0,
     },
 
-    // Pocet již uplatnených odmen (napr. kolik „free coffee“ už probehlo)
+    // Pocet již uplatnených odmen
     rewards: {
       type: Number,
       default: 0,
     },
 
-    // Libovolná poznámka (už ji máš v DB)
+    // Poznámka
     notes: {
       type: String,
     },
   },
   {
-    timestamps: true, // createdAt, updatedAt
+    timestamps: true,
   }
 );
 
