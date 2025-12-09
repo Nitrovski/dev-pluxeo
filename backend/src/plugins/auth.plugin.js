@@ -1,10 +1,11 @@
 // src/plugins/auth.plugin.js
+import fp from "fastify-plugin";
 import jwt from "jsonwebtoken";
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 const JWT_EXPIRES_IN = "7d";
 
-export default async function authPlugin(fastify, options) {
+async function authPlugin(fastify, options) {
   // Podpis JWT pro merchanta
   fastify.decorate("jwtSignMerchant", (merchant) => {
     return jwt.sign(
@@ -41,3 +42,6 @@ export default async function authPlugin(fastify, options) {
     }
   });
 }
+
+// ?? Tohle je klícové – dekorace se „propíše“ na root fastify instanci
+export default fp(authPlugin);
