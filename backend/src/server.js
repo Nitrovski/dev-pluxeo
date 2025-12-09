@@ -7,6 +7,10 @@ import cors from '@fastify/cors';
 import cardRoutes from './routes/card.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 
+// ? nové importy pro autentizaci
+import authPlugin from './plugins/auth.plugin.js';
+import authRoutes from './routes/auth.routes.js';
+
 dotenv.config();
 
 const fastify = Fastify({
@@ -31,15 +35,25 @@ const start = async () => {
     await fastify.register(cors, {
       origin: true, // vrátí Access-Control-Allow-Origin dle originu requestu
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'X-Api-Key'],
+      allowedHeaders: [
+        'Content-Type',
+        'X-Api-Key',
+        'Authorization', // ? kvuli Bearer tokenum
+      ],
     });
+
+    // ? registrace auth pluginu (JWT logika) – pred routes
+    await fastify.register(authPlugin);
 
     // Health-check / test endpoint
     fastify.get('/', async () => {
       return { status: 'Pluxeo API bezi' };
     });
 
-    // Routes
+    // ? Auth routes (registrace / login merchantu, /me)
+    fastify.register(authRoutes);
+
+    // Ostatní routes
     fastify.register(cardRoutes);
     fastify.register(customerRoutes);
 
