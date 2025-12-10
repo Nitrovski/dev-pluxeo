@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/Nitrovski/dev-pluxeo#readme",
   "dependencies": {
+    "@clerk/fastify": "^2.6.9",
     "@fastify/cors": "^10.0.0",
     "bcrypt": "^6.0.0",
     "dotenv": "^17.2.3",

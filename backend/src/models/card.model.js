@@ -6,7 +6,7 @@ const CardSchema = new Schema(
   {
     // ID merchanta, kterému karta patrí
     merchantId: {
-      type: Schema.Types.ObjectId,
+      type: String,
       ref: "Merchant",
       required: true,
       index: true,
