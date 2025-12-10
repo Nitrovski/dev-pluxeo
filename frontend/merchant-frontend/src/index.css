@@ -1,0 +1,17 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Globální nastavení appky */
+body {
+  @apply bg-slate-950 text-slate-50 antialiased;
+  margin: 0;
+  min-height: 100vh;
+}
+
+/* Když chceš, mužeš si nechat i font-family pres :root */
+:root {
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  line-height: 1.5;
+}
