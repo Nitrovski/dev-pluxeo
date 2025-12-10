@@ -15,7 +15,7 @@ const CardSchema = new Schema(
     // Verejné ID zákazníka (kavárny apod.)
     customerId: {
       type: String,
-      required: true,
+      required: false,
       index: true,
     },
 
