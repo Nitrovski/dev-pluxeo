@@ -29,18 +29,22 @@ async function cardRoutes(fastify, options) {
 
       return reply.code(201).send(card);
     } catch (err) {
-      request.log.error(err, "Error creating card");
+  request.log.error({ err, body: request.body }, "Error creating card");
 
-      // Mongo duplicate key (např. unique walletToken)
-      if (err.code === 11000) {
-        return reply
-          .code(409)
-          .send({ error: "Card with this walletToken already exists" });
-      }
+  if (err.code === 11000) {
+    return reply
+      .code(409)
+      .send({ error: "Card with this walletToken already exists" });
+  }
 
-      return reply.code(500).send({ error: "Error creating card" });
-    }
+  // ������ Dočasně pošleme podrobnou chybu
+  return reply.code(500).send({
+    error: "Error creating card",
+    message: err.message,   // ← TADY UVIDÍME CO PŘESNĚ MONGOOSE VADÍ
+    name: err.name,
+    stack: err.stack,       // ← můžeš nechat nebo odebrat
   });
+}
 
   /**
    * GET /api/cards
