@@ -2,6 +2,7 @@
 import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
 import { getAuth } from "@clerk/fastify";
+import crypto from "crypto";
 
 async function cardRoutes(fastify, options) {
   /**
@@ -9,43 +10,54 @@ async function cardRoutes(fastify, options) {
    * Vytvo≈ô√≠ novou kartu pro P≈òIHL√Å≈†EN√âHO merchanta
    */
   fastify.post("/api/cards", async (request, reply) => {
-    try {
-      const { isAuthenticated, userId } = getAuth(request);
+  try {
+    const { isAuthenticated, userId } = getAuth(request);
 
-      if (!isAuthenticated || !userId) {
-        return reply.code(401).send({ error: "Missing or invalid token" });
-      }
-
-      const merchantId = userId;
-
-      // Data z frontendu ‚Äì nap≈ô. headline, subheadline, themeColor...
-      const payload = request.body || {};
-
-      // merchantId si v≈ædy bereme z JWT (p≈ô√≠padn√Ω merchantId v body p≈ôep√≠≈°eme)
-      const card = await Card.create({
-        ...payload,
-        merchantId,
-      });
-
-      return reply.code(201).send(card);
-    } catch (err) {
-      request.log.error({ err, body: request.body }, "Error creating card");
-
-      if (err.code === 11000) {
-        return reply
-          .code(409)
-          .send({ error: "Card with this walletToken already exists" });
-      }
-
-      // Ì†ΩÌ¥ç Doƒçasnƒõ po≈°leme podrobnou chybu
-      return reply.code(500).send({
-        error: "Error creating card",
-        message: err.message, // ‚Üê TADY UVID√çME CO P≈òESNƒö MONGOOSE VAD√ç
-        name: err.name,
-        stack: err.stack, // ‚Üê m≈Ø≈æe≈° nechat nebo odebrat
-      });
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
     }
-  }); // ‚úÖ ukonƒçen√≠ fastify.post
+
+    const merchantId = userId;
+
+    const payload = request.body || {};
+    const { customerId } = payload;
+
+    // Ì†ΩÌ±â 1) customerId MUS√ç p≈ôij√≠t z frontendu
+    if (!customerId) {
+      return reply
+        .code(400)
+        .send({ error: "customerId is required to create a card" });
+    }
+
+    // Ì†ΩÌ±â 2) walletToken vygenerujeme, pokud nep≈ôi≈°el
+    const walletToken =
+      payload.walletToken || crypto.randomUUID().replace(/-/g, "");
+
+    const card = await Card.create({
+      ...payload,
+      merchantId,
+      customerId,
+      walletToken,
+    });
+
+    return reply.code(201).send(card);
+  } catch (err) {
+    request.log.error({ err, body: request.body }, "Error creating card");
+
+    if (err.code === 11000) {
+      return reply
+        .code(409)
+        .send({ error: "Card with this walletToken already exists" });
+    }
+
+    return reply.code(500).send({
+      error: "Error creating card",
+      message: err.message,
+      name: err.name,
+      stack: err.stack,
+    });
+  }
+});
 
   /**
    * GET /api/cards
