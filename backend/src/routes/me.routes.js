@@ -1,24 +1,22 @@
-import { User } from "../models/user.model.js";
+import { getAuth } from "@clerk/fastify";
+import { Customer } from "../models/customer.model.js";
 
-async function meRoutes(fastify, options) {
+export default async function meRoutes(fastify) {
   fastify.get("/api/me", async (request, reply) => {
-    const clerkUserId = request.userId;
-
-    if (!clerkUserId) {
-      return reply.code(401).send({ error: "Unauthorized" });
+    const { isAuthenticated, userId } = getAuth(request);
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
     }
 
-    const user = await User.findOne({ clerkUserId });
-
-    if (!user) {
-      return reply.code(404).send({ error: "User not found" });
+    const customer = await Customer.findOne({ merchantId: userId }).lean();
+    if (!customer) {
+      return reply.code(404).send({ error: "Customer not found for this merchant" });
     }
 
     return reply.send({
-      clerkUserId: user.clerkUserId,
-      customerId: user.customerId,
+      merchantId: userId,
+      customerId: customer.customerId,
+      customerName: customer.name ?? null,
     });
   });
 }
-
-export default meRoutes;
