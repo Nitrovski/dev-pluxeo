@@ -8,6 +8,10 @@ const merchantSchema = new mongoose.Schema(
       required: true,
       trim: true,
     },
+    template: {
+      type: Schema.Types.Mixed, // flexibilní – mužeme menit strukturu na FE
+      default: {},
+    },
     email: {
       type: String,
       required: true,
