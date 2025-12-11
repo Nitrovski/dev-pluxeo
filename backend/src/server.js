@@ -3,6 +3,7 @@ import Fastify from 'fastify';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import cors from '@fastify/cors';
+import { clerkAuthMiddleware } from "./middleware/auth.js"; //import middleware
 
 // Clerk fastify plugin
 import { clerkPlugin } from '@clerk/fastify';
@@ -17,6 +18,9 @@ dotenv.config();
 const fastify = Fastify({
   logger: true,
 });
+
+// Clerk decode middleware
+clerkAuthMiddleware(fastify);
 
 // MongoDB URL z env
 const mongoUri = process.env.MONGODB_URI;

@@ -1,6 +1,7 @@
 // src/routes/auth.routes.js
 import bcrypt from "bcrypt";
 import { Merchant } from "../models/merchant.model.js";
+import { User } from "../models/user.model.js";
 
 const SALT_ROUNDS = 10;
 
@@ -47,6 +48,35 @@ export default async function authRoutes(fastify, options) {
     } catch (err) {
       request.log.error(err, "Error registering merchant");
       return reply.code(500).send({ error: "Internal server error" });
+    }
+  });
+  
+  // POST /api/auth/sync
+  fastify.post("/api/auth/sync", async (request, reply) => {
+    try {
+      const clerkUserId = request.userId; // pridáme middleware níže
+
+      if (!clerkUserId) {
+        return reply.code(401).send({ error: "Unauthorized" });
+      }
+
+      let user = await User.findOne({ clerkUserId });
+
+      if (!user) {
+        // zatím 1 merchant/testovací
+        user = await User.create({
+          clerkUserId,
+          customerId: "pluxeo-coffee", // TODO: pozdeji dynamické
+        });
+      }
+
+      return reply.send({
+        clerkUserId: user.clerkUserId,
+        customerId: user.customerId,
+      });
+    } catch (err) {
+      request.log.error(err);
+      reply.code(500).send({ error: "Failed to sync user" });
     }
   });
 
