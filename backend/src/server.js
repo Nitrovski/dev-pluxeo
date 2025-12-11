@@ -7,8 +7,10 @@ import cors from '@fastify/cors';
 // Clerk fastify plugin
 import { clerkPlugin } from '@clerk/fastify';
 
+// Routes
 import cardRoutes from './routes/card.routes.js';
 import customerRoutes from './routes/customer.routes.js';
+import cardTemplateRoutes from "./routes/cardTemplate.routes.js";
 
 dotenv.config();
 
@@ -39,38 +41,33 @@ const start = async () => {
     await mongoose.connect(mongoUri);
     fastify.log.info('? MongoDB pripojena');
 
-    // CORS – pro vývoj povolíme všechny originy
+    // CORS – povolíme všechny originy (MVP)
     await fastify.register(cors, {
-      origin: true, // vrátí Access-Control-Allow-Origin dle originu requestu
+      origin: true,
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
-      allowedHeaders: [
-        'Content-Type',
-        'X-Api-Key',
-        'Authorization', // kvuli Bearer tokenum z Clerku
-      ],
+      allowedHeaders: ['Content-Type', 'Authorization'],
     });
 
-    // ?? Clerk plugin – MUSÍ být zaregistrovaný pred /api routami
+    // Clerk plugin musí být registrován PRED routami
     await fastify.register(clerkPlugin, {
       secretKey: clerkSecretKey,
       publishableKey: clerkPublishableKey,
-      // hookName: 'preHandler', // defaultne, mužeš prepsat když bys chtel
     });
 
-    // Health-check / test endpoint
+    // Health-check
     fastify.get('/', async () => {
       return { status: 'Pluxeo API beží' };
     });
 
-    // Sem ted už authRoutes / authPlugin nedáváme – Clerk reší auth
-
-    // Ostatní routes (už budou mít k dispozici getAuth(request) z @clerk/fastify)
+    // API routes (autorizace rešíme pres getAuth(request))
     fastify.register(cardRoutes);
     fastify.register(customerRoutes);
+    fastify.register(cardTemplateRoutes); // pridáni template rout
 
     // Start serveru
     const port = process.env.PORT || 3000;
     await fastify.listen({ port, host: '0.0.0.0' });
+
     fastify.log.info(`?? Server beží na portu ${port}`);
   } catch (err) {
     fastify.log.error(err, '? Chyba pri startu serveru');
