@@ -8,91 +8,75 @@ const CustomerSettingsSchema = new Schema(
       type: Number,
       default: 10,
     },
+
+    // pokud chceš držet "single theme color" kvuli kompatibilite, nech tu
     themeColor: {
       type: String,
       default: "#FF9900",
     },
+
     logoUrl: {
       type: String,
+      default: null,
     },
   },
   { _id: false }
 );
 
-// nový blok pro obsah karty
 const CardContentSchema = new Schema(
   {
-    // hlavní titulek na karte (napr. "Káva zdarma po 10 razítkách")
-    headline: {
+    headline: { type: String, default: "" },
+    subheadline: { type: String, default: "" },
+    openingHours: { type: String, default: "" },
+    customMessage: { type: String, default: "" },
+    websiteUrl: { type: String, default: "" },
+
+    lastUpdatedAt: { type: Date, default: null },
+
+    // design (tady je zdroj pravdy pro “template”)
+    themeVariant: {
       type: String,
-      default: "",
+      enum: ["classic", "stamps", "minimal"],
+      default: "classic",
     },
-    // podtitulek / krátký popis
-    subheadline: {
-      type: String,
-      default: "",
-    },
-    // otevírací doba – pro MVP jako prostý text
-    openingHours: {
-      type: String,
-      default: "",
-    },
-    // volná promo zpráva – mužeš menit podle potreby
-    customMessage: {
-      type: String,
-      default: "",
-    },
-    // odkaz na web / menu / rezervace
-    websiteUrl: {
-      type: String,
-      default: "",
-    },
-    // kdy obchodník naposledy neco zmenil
-    lastUpdatedAt: {
-      type: Date,
-    },
-    themeVariant: { type: String, default: "classic" },
     primaryColor: { type: String, default: "#FF9900" },
     secondaryColor: { type: String, default: "#111111" },
-
-    freeStampsToReward: { type: Number, default: 0 },
   },
   { _id: false }
 );
 
 const CustomerSchema = new Schema(
   {
+    // Clerk userId (merchant)
+    merchantId: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
+    // verejné ID (slug), co je v QR / URL
     customerId: {
       type: String,
       required: true,
       unique: true,
       index: true,
     },
-    name: {
-      type: String,
-      required: true,
-    },
-    email: {
-      type: String,
-    },
-    address: {
-      type: String,
-    },
+
+    name: { type: String, required: true },
+    email: { type: String, default: null },
+    address: { type: String, default: null },
 
     settings: {
       type: CustomerSettingsSchema,
-      default: {},
+      default: () => ({}),
     },
 
-    // ?? tady pridáme obsah karty
     cardContent: {
       type: CardContentSchema,
-      default: {},
+      default: () => ({}),
     },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 export const Customer = model("Customer", CustomerSchema);
