@@ -1,6 +1,7 @@
 // src/routes/customer.routes.js
 import { Customer } from "../models/customer.model.js";
 import { getAuth } from "@clerk/fastify";
+import crypto from "crypto";
 
 /**
  * CardContent normalizace (aby FE Zod schema vždy prošla)
@@ -49,31 +50,72 @@ function coercePositiveInt(value, fallback = 10) {
   return rounded > 0 ? rounded : fallback;
 }
 
+function slugify(s) {
+  return String(s || "")
+    .toLowerCase()
+    .trim()
+    .replace(/\s+/g, "-")
+    .replace(/[^a-z0-9-]/g, "")
+    .replace(/-+/g, "-")
+    .slice(0, 40);
+}
+
 async function customerRoutes(fastify, options) {
+
+
   /**
-   * GET /api/me
-   * Vrátí customerId pro prihlášeného merchanta
-   *
-  fastify.get("/api/me", async (request, reply) => {
+   * POST /api/customers/ensure
+   * Idempotentne zajistí, že pro prihlášeného merchanta existuje Customer dokument.
+   * - když existuje, jen vrátí customerId
+   * - když neexistuje, vytvorí nový (customerId slug + náhodný suffix)
+   */
+  fastify.post("/api/customers/ensure", async (request, reply) => {
     try {
       const { isAuthenticated, userId } = getAuth(request);
       if (!isAuthenticated || !userId) {
         return reply.code(401).send({ error: "Missing or invalid token" });
       }
 
-      const customer = await Customer.findOne({ merchantId: userId }).lean();
-      if (!customer) {
-        return reply.code(404).send({ error: "Customer not found for this merchant" });
+      const merchantId = userId;
+
+      const existing = await Customer.findOne({ merchantId }).lean();
+      if (existing) {
+        return reply.send({
+          customerId: existing.customerId,
+          customerName: existing.name ?? null,
+        });
       }
 
+      const body = request.body || {};
+      const name = typeof body.name === "string" ? body.name : "My Business";
+      const email = typeof body.email === "string" ? body.email : null;
+
+      const base =
+        slugify(name) ||
+        slugify((email || "").split("@")[0]) ||
+        "merchant";
+
+      const customerId = `${base}-${crypto.randomBytes(3).toString("hex")}`;
+
+      const created = await Customer.create({
+        merchantId,
+        customerId,
+        name,
+        email,
+        settings: {
+          freeStampsToReward: 10,
+        },
+        cardContent: normalizeCardContent({}),
+      });
+
       return reply.send({
-        merchantId: userId,
-        customerId: customer.customerId,
-        customerName: customer.name ?? null,
+        customerId: created.customerId,
+        customerName: created.name ?? null,
       });
     } catch (err) {
-      request.log.error(err, "Error in /api/me");
-      return reply.code(500).send({ error: "Error in /api/me" });
+      request.log.error(err, "Error ensuring customer");
+      // kdyby náhodou narazil na unique customerId collision, FE to muže zavolat znovu
+      return reply.code(500).send({ error: "Error ensuring customer" });
     }
   });
 
@@ -91,7 +133,6 @@ async function customerRoutes(fastify, options) {
       const merchantId = userId;
       const body = request.body || {};
 
-      // kompatibilita: pokud FE pošle freeStampsToReward, uložíme do settings
       const freeStampsToReward = coercePositiveInt(body.freeStampsToReward, 10);
 
       const doc = {
@@ -101,11 +142,9 @@ async function customerRoutes(fastify, options) {
           ...(body.settings || {}),
           freeStampsToReward,
         },
-        // cardContent normalizace
         cardContent: normalizeCardContent(body.cardContent || body),
       };
 
-      // nedovolíme, aby to zustalo jako “top-level” pole v Customer dokumentu
       delete doc.freeStampsToReward;
 
       const customer = await Customer.create(doc);
@@ -181,7 +220,6 @@ async function customerRoutes(fastify, options) {
 
       const normalized = normalizeCardContent(cc);
 
-      // DB self-heal (valid enum/strings)
       await Customer.updateOne(
         { customerId, merchantId },
         { $set: { cardContent: normalized } }
@@ -225,14 +263,12 @@ async function customerRoutes(fastify, options) {
         return reply.code(404).send({ error: "Customer not found" });
       }
 
-      // 1) threshold do settings (single source of truth)
       if (payload.freeStampsToReward !== undefined) {
         const n = coercePositiveInt(payload.freeStampsToReward, 10);
         customer.settings = customer.settings || {};
         customer.settings.freeStampsToReward = n;
       }
 
-      // 2) do cardContent uložíme zbytek
       const { freeStampsToReward, ...rest } = payload;
 
       const existing =
