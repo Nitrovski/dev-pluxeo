@@ -153,43 +153,89 @@ async function customerRoutes(fastify, options) {
    * Uloží / updatuje obsah karty (šablona)
    * ?? pouze prihlášený merchant a jen jeho customer.
    */
-  fastify.patch("/api/customers/:customerId/card-content", async (request, reply) => {
-    try {
-      const { isAuthenticated, userId } = getAuth(request);
-      if (!isAuthenticated || !userId) {
-        return reply.code(401).send({ error: "Missing or invalid token" });
-      }
+ fastify.get("/api/customers/:customerId/card-content", async (request, reply) => {
+  try {
+    const { isAuthenticated, userId } = getAuth(request);
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
+    }
 
-      const merchantId = userId;
-      const { customerId } = request.params;
-      const payload = request.body || {};
+    const merchantId = userId;
+    const { customerId } = request.params;
 
-      // sloucíme existující a nové + normalizujeme
-      const customer = await Customer.findOne({ customerId, merchantId });
-      if (!customer) {
-        return reply.code(404).send({ error: "Customer not found" });
-      }
+    const customer = await Customer.findOne({ customerId, merchantId }).lean();
+    if (!customer) {
+      return reply.code(404).send({ error: "Customer not found" });
+    }
 
-      const existing = customer.cardContent && typeof customer.cardContent === "object"
+    const cc = normalizeCardContent(customer.cardContent || {});
+    const tRaw = customer?.settings?.freeStampsToReward;
+    const t = Number(tRaw);
+    const freeStampsToReward = Number.isFinite(t) && t > 0 ? t : 10;
+
+    // ?? kompatibilita s FE: vracíme freeStampsToReward v payloadu
+    return reply.send({
+      ...cc,
+      freeStampsToReward,
+    });
+  } catch (err) {
+    request.log.error(err, "Error fetching card content");
+    return reply.code(500).send({ error: "Error fetching card content" });
+  }
+});
+
+// 4) PATCH – uloží / updatuje obsah karty (naše šablona)
+fastify.patch("/api/customers/:customerId/card-content", async (request, reply) => {
+  try {
+    const { isAuthenticated, userId } = getAuth(request);
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
+    }
+
+    const merchantId = userId;
+    const { customerId } = request.params;
+
+    const payload = request.body || {};
+
+    const customer = await Customer.findOne({ customerId, merchantId });
+    if (!customer) {
+      return reply.code(404).send({ error: "Customer not found" });
+    }
+
+    // 1) vezmeme threshold z payloadu a uložíme do settings
+    if (payload.freeStampsToReward !== undefined) {
+      const n = Number(payload.freeStampsToReward);
+      customer.settings = customer.settings || {};
+      customer.settings.freeStampsToReward = Number.isFinite(n) && n > 0 ? n : 10;
+    }
+
+    // 2) z payloadu odstraníme freeStampsToReward a uložíme zbytek do cardContent
+    const { freeStampsToReward, ...rest } = payload;
+
+    const existing =
+      customer.cardContent && typeof customer.cardContent === "object"
         ? customer.cardContent
         : {};
 
-      const merged = {
-        ...existing,
-        ...payload,
-        lastUpdatedAt: new Date(),
-      };
+    customer.cardContent = normalizeCardContent({
+      ...existing,
+      ...rest,
+      lastUpdatedAt: new Date(),
+    });
 
-      customer.cardContent = normalizeCardContent(merged);
+    await customer.save();
 
-      await customer.save();
+    const t = Number(customer?.settings?.freeStampsToReward);
+    const safeT = Number.isFinite(t) && t > 0 ? t : 10;
 
-      return reply.send(customer.cardContent);
-    } catch (err) {
-      request.log.error(err, "Error updating card content");
-      return reply.code(500).send({ error: "Error updating card content" });
-    }
-  });
-}
+    return reply.send({
+      ...customer.cardContent,
+      freeStampsToReward: safeT,
+    });
+  } catch (err) {
+    request.log.error(err, "Error updating card content");
+    return reply.code(500).send({ error: "Error updating card content" });
+  }
+});
 
 export default customerRoutes;
