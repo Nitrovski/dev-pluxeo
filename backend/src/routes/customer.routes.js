@@ -26,8 +26,10 @@ function normalizeCardContent(input = {}) {
   const allowed = new Set(["classic", "stamps", "minimal"]);
   if (!allowed.has(out.themeVariant)) out.themeVariant = DEFAULT_CARD_CONTENT.themeVariant;
 
-  out.primaryColor = typeof out.primaryColor === "string" ? out.primaryColor : DEFAULT_CARD_CONTENT.primaryColor;
-  out.secondaryColor = typeof out.secondaryColor === "string" ? out.secondaryColor : DEFAULT_CARD_CONTENT.secondaryColor;
+  out.primaryColor =
+    typeof out.primaryColor === "string" ? out.primaryColor : DEFAULT_CARD_CONTENT.primaryColor;
+  out.secondaryColor =
+    typeof out.secondaryColor === "string" ? out.secondaryColor : DEFAULT_CARD_CONTENT.secondaryColor;
 
   for (const k of ["headline", "subheadline", "openingHours", "customMessage", "websiteUrl"]) {
     out[k] = typeof out[k] === "string" ? out[k] : "";
@@ -40,7 +42,41 @@ function isEmptyObject(x) {
   return x && typeof x === "object" && !Array.isArray(x) && Object.keys(x).length === 0;
 }
 
+function coercePositiveInt(value, fallback = 10) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const rounded = Math.floor(n);
+  return rounded > 0 ? rounded : fallback;
+}
+
 async function customerRoutes(fastify, options) {
+  /**
+   * GET /api/me
+   * Vrátí customerId pro prihlášeného merchanta
+   */
+  fastify.get("/api/me", async (request, reply) => {
+    try {
+      const { isAuthenticated, userId } = getAuth(request);
+      if (!isAuthenticated || !userId) {
+        return reply.code(401).send({ error: "Missing or invalid token" });
+      }
+
+      const customer = await Customer.findOne({ merchantId: userId }).lean();
+      if (!customer) {
+        return reply.code(404).send({ error: "Customer not found for this merchant" });
+      }
+
+      return reply.send({
+        merchantId: userId,
+        customerId: customer.customerId,
+        customerName: customer.name ?? null,
+      });
+    } catch (err) {
+      request.log.error(err, "Error in /api/me");
+      return reply.code(500).send({ error: "Error in /api/me" });
+    }
+  });
+
   /**
    * POST /api/customers
    * Vytvorení nového zákazníka (provozovny) pro prihlášeného merchanta
@@ -55,13 +91,22 @@ async function customerRoutes(fastify, options) {
       const merchantId = userId;
       const body = request.body || {};
 
-      // vynutíme merchantId ze session (ne z body)
+      // kompatibilita: pokud FE pošle freeStampsToReward, uložíme do settings
+      const freeStampsToReward = coercePositiveInt(body.freeStampsToReward, 10);
+
       const doc = {
         ...body,
         merchantId,
-        // aby cardContent nebylo rozbité už pri create
-        cardContent: normalizeCardContent(body.cardContent || {}),
+        settings: {
+          ...(body.settings || {}),
+          freeStampsToReward,
+        },
+        // cardContent normalizace
+        cardContent: normalizeCardContent(body.cardContent || body),
       };
+
+      // nedovolíme, aby to zustalo jako “top-level” pole v Customer dokumentu
+      delete doc.freeStampsToReward;
 
       const customer = await Customer.create(doc);
       return reply.code(201).send(customer);
@@ -110,6 +155,8 @@ async function customerRoutes(fastify, options) {
    * ?? pouze prihlášený merchant a jen jeho customer.
    *
    * Pokud ješte není nic nastavené -> 404 (FE použije defaulty)
+   *
+   * ? Kompatibilita s FE: vrací i freeStampsToReward (z settings)
    */
   fastify.get("/api/customers/:customerId/card-content", async (request, reply) => {
     try {
@@ -128,20 +175,27 @@ async function customerRoutes(fastify, options) {
 
       const cc = customer.cardContent;
 
-      // pokud je null / {} -> 404 (FE fallback)
       if (!cc || isEmptyObject(cc)) {
         return reply.code(404).send({ error: "Card content not found" });
       }
 
       const normalized = normalizeCardContent(cc);
 
-      // prubežne opravíme DB (at se už nevrací nevalidní veci)
+      // DB self-heal (valid enum/strings)
       await Customer.updateOne(
         { customerId, merchantId },
         { $set: { cardContent: normalized } }
       );
 
-      return reply.send(normalized);
+      const freeStampsToReward = coercePositiveInt(
+        customer?.settings?.freeStampsToReward,
+        10
+      );
+
+      return reply.send({
+        ...normalized,
+        freeStampsToReward,
+      });
     } catch (err) {
       request.log.error(err, "Error fetching card content");
       return reply.code(500).send({ error: "Error fetching card content" });
@@ -152,90 +206,61 @@ async function customerRoutes(fastify, options) {
    * PATCH /api/customers/:customerId/card-content
    * Uloží / updatuje obsah karty (šablona)
    * ?? pouze prihlášený merchant a jen jeho customer.
+   *
+   * ? Kompatibilita s FE: freeStampsToReward z payloadu uložíme do settings
    */
- fastify.get("/api/customers/:customerId/card-content", async (request, reply) => {
-  try {
-    const { isAuthenticated, userId } = getAuth(request);
-    if (!isAuthenticated || !userId) {
-      return reply.code(401).send({ error: "Missing or invalid token" });
+  fastify.patch("/api/customers/:customerId/card-content", async (request, reply) => {
+    try {
+      const { isAuthenticated, userId } = getAuth(request);
+      if (!isAuthenticated || !userId) {
+        return reply.code(401).send({ error: "Missing or invalid token" });
+      }
+
+      const merchantId = userId;
+      const { customerId } = request.params;
+      const payload = request.body || {};
+
+      const customer = await Customer.findOne({ customerId, merchantId });
+      if (!customer) {
+        return reply.code(404).send({ error: "Customer not found" });
+      }
+
+      // 1) threshold do settings (single source of truth)
+      if (payload.freeStampsToReward !== undefined) {
+        const n = coercePositiveInt(payload.freeStampsToReward, 10);
+        customer.settings = customer.settings || {};
+        customer.settings.freeStampsToReward = n;
+      }
+
+      // 2) do cardContent uložíme zbytek
+      const { freeStampsToReward, ...rest } = payload;
+
+      const existing =
+        customer.cardContent && typeof customer.cardContent === "object"
+          ? customer.cardContent
+          : {};
+
+      const merged = {
+        ...existing,
+        ...rest,
+        lastUpdatedAt: new Date(),
+      };
+
+      customer.cardContent = normalizeCardContent(merged);
+
+      await customer.save();
+
+      const safeThreshold = coercePositiveInt(customer?.settings?.freeStampsToReward, 10);
+
+      return reply.send({
+        ...customer.cardContent,
+        freeStampsToReward: safeThreshold,
+      });
+    } catch (err) {
+      request.log.error(err, "Error updating card content");
+      return reply.code(500).send({ error: "Error updating card content" });
     }
-
-    const merchantId = userId;
-    const { customerId } = request.params;
-
-    const customer = await Customer.findOne({ customerId, merchantId }).lean();
-    if (!customer) {
-      return reply.code(404).send({ error: "Customer not found" });
-    }
-
-    const cc = normalizeCardContent(customer.cardContent || {});
-    const tRaw = customer?.settings?.freeStampsToReward;
-    const t = Number(tRaw);
-    const freeStampsToReward = Number.isFinite(t) && t > 0 ? t : 10;
-
-    // ?? kompatibilita s FE: vracíme freeStampsToReward v payloadu
-    return reply.send({
-      ...cc,
-      freeStampsToReward,
-    });
-  } catch (err) {
-    request.log.error(err, "Error fetching card content");
-    return reply.code(500).send({ error: "Error fetching card content" });
-  }
-});
-
-// 4) PATCH – uloží / updatuje obsah karty (naše šablona)
-fastify.patch("/api/customers/:customerId/card-content", async (request, reply) => {
-  try {
-    const { isAuthenticated, userId } = getAuth(request);
-    if (!isAuthenticated || !userId) {
-      return reply.code(401).send({ error: "Missing or invalid token" });
-    }
-
-    const merchantId = userId;
-    const { customerId } = request.params;
-
-    const payload = request.body || {};
-
-    const customer = await Customer.findOne({ customerId, merchantId });
-    if (!customer) {
-      return reply.code(404).send({ error: "Customer not found" });
-    }
-
-    // 1) vezmeme threshold z payloadu a uložíme do settings
-    if (payload.freeStampsToReward !== undefined) {
-      const n = Number(payload.freeStampsToReward);
-      customer.settings = customer.settings || {};
-      customer.settings.freeStampsToReward = Number.isFinite(n) && n > 0 ? n : 10;
-    }
-
-    // 2) z payloadu odstraníme freeStampsToReward a uložíme zbytek do cardContent
-    const { freeStampsToReward, ...rest } = payload;
-
-    const existing =
-      customer.cardContent && typeof customer.cardContent === "object"
-        ? customer.cardContent
-        : {};
-
-    customer.cardContent = normalizeCardContent({
-      ...existing,
-      ...rest,
-      lastUpdatedAt: new Date(),
-    });
-
-    await customer.save();
-
-    const t = Number(customer?.settings?.freeStampsToReward);
-    const safeT = Number.isFinite(t) && t > 0 ? t : 10;
-
-    return reply.send({
-      ...customer.cardContent,
-      freeStampsToReward: safeT,
-    });
-  } catch (err) {
-    request.log.error(err, "Error updating card content");
-    return reply.code(500).send({ error: "Error updating card content" });
-  }
-});
+  });
+}
 
 export default customerRoutes;
