@@ -4,6 +4,8 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import cors from '@fastify/cors';
 import { clerkAuthMiddleware } from "./middleware/auth.js"; //import middleware
+import meRoutes from "./routes/me.routes.js";
+
 
 // Clerk fastify plugin
 import { clerkPlugin } from '@clerk/fastify';
@@ -67,6 +69,7 @@ const start = async () => {
     fastify.register(cardRoutes);
     fastify.register(customerRoutes);
     fastify.register(cardTemplateRoutes); // pridáni template rout
+    fastify.register(meRoutes);
 
     // Start serveru
     const port = process.env.PORT || 3000;
