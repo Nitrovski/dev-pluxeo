@@ -53,7 +53,7 @@ async function customerRoutes(fastify, options) {
   /**
    * GET /api/me
    * Vrátí customerId pro prihlášeného merchanta
-   */
+   *
   fastify.get("/api/me", async (request, reply) => {
     try {
       const { isAuthenticated, userId } = getAuth(request);
