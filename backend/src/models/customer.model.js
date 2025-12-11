@@ -51,6 +51,11 @@ const CardContentSchema = new Schema(
     lastUpdatedAt: {
       type: Date,
     },
+    themeVariant: { type: String, default: "classic" },
+    primaryColor: { type: String, default: "#FF9900" },
+    secondaryColor: { type: String, default: "#111111" },
+
+    freeStampsToReward: { type: Number, default: 0 },
   },
   { _id: false }
 );
