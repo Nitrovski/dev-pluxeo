@@ -3,6 +3,7 @@ import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
 import { getAuth } from "@clerk/fastify";
 import crypto from "crypto";
+import { CardEvent } from "../models/cardEvent.model.js";
 
 async function cardRoutes(fastify, options) {
   /**
@@ -25,12 +26,33 @@ async function cardRoutes(fastify, options) {
       const walletToken =
         incomingWalletToken || crypto.randomUUID().replace(/-/g, "");
 
-      const card = await Card.create({
-        ...rest,
-        merchantId,
-        customerId,
-        walletToken,
-      });
+const card = await Card.create({
+  ...rest,
+  merchantId,
+  customerId,
+  walletToken,
+  lastEventAt: new Date(),
+});
+
+await CardEvent.create({
+  merchantId,
+  cardId: card._id,
+  walletToken: card.walletToken,
+  type: "CARD_CREATED",
+  deltaStamps: 0,
+  deltaRewards: 0,
+  cardType: card.type ?? "stamps",
+  templateId: card.templateId ?? null,
+  actor: {
+    type: "merchant",
+    actorId: merchantId,
+    source: "merchant-app",
+  },
+  payload: {
+    customerId,
+  },
+});
+
 
       return reply.code(201).send(card);
     } catch (err) {
@@ -150,11 +172,59 @@ async function cardRoutes(fastify, options) {
         newStamps -= threshold;
       }
 
-      card.stamps = newStamps;
-      card.rewards = newRewards;
+const prevRewards = card.rewards || 0;
 
-      await card.save();
-      return reply.send(card);
+card.stamps = newStamps;
+card.rewards = newRewards;
+card.lastEventAt = new Date();
+
+await card.save();
+
+// event: přidání razítka
+await CardEvent.create({
+  merchantId,
+  cardId: card._id,
+  walletToken: card.walletToken,
+  type: "STAMP_ADDED",
+  deltaStamps: amount,
+  deltaRewards: 0,
+  cardType: card.type ?? "stamps",
+  templateId: card.templateId ?? null,
+  actor: {
+    type: "merchant",
+    actorId: merchantId,
+    source: "merchant-app",
+  },
+  payload: {
+    threshold,
+  },
+});
+
+// event: uplatnění odměny (pokud nastalo)
+const rewardDelta = newRewards - prevRewards;
+if (rewardDelta > 0) {
+  await CardEvent.create({
+    merchantId,
+    cardId: card._id,
+    walletToken: card.walletToken,
+    type: "REWARD_REDEEMED",
+    deltaStamps: 0,
+    deltaRewards: rewardDelta,
+    cardType: card.type ?? "stamps",
+    templateId: card.templateId ?? null,
+    actor: {
+      type: "merchant",
+      actorId: merchantId,
+      source: "merchant-app",
+    },
+    payload: {
+      threshold,
+    },
+  });
+}
+
+return reply.send(card);
+
     } catch (err) {
       request.log.error(err, "Error adding stamp");
       return reply.code(500).send({ error: "Error adding stamp" });

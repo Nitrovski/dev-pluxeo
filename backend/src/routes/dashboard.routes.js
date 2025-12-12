@@ -1,5 +1,6 @@
 import { getAuth } from "@clerk/fastify";
 import { Card } from "../models/card.model.js";
+import { CardEvent } from "../models/cardEvent.model.js";
 
 function startOfDay(d) {
   const x = new Date(d);
@@ -22,13 +23,16 @@ export default async function dashboardRoutes(fastify) {
     const merchantId = userId;
 
     const now = new Date();
-    const d7 = addDays(now, -7);
-    const d30 = addDays(now, -30);
+    const today = startOfDay(now);
+    const tomorrow = addDays(today, 1);
+    const d7 = addDays(today, -6); // včetně dneška (7 dní)
+    const d30 = addDays(today, -29);
 
-    const [activeCards, newCards7d, newCards30d, sums] = await Promise.all([
+    /* -------------------------------------------------
+     * KPI – stavové (Card)
+     * ------------------------------------------------- */
+    const [activeCards, cardSums] = await Promise.all([
       Card.countDocuments({ merchantId }),
-      Card.countDocuments({ merchantId, createdAt: { $gte: d7 } }),
-      Card.countDocuments({ merchantId, createdAt: { $gte: d30 } }),
       Card.aggregate([
         { $match: { merchantId } },
         {
@@ -41,18 +45,53 @@ export default async function dashboardRoutes(fastify) {
       ]),
     ]);
 
-    const totalStamps = sums?.[0]?.totalStamps ?? 0;
-    const totalRewards = sums?.[0]?.totalRewards ?? 0;
+    const totalStamps = cardSums?.[0]?.totalStamps ?? 0;
+    const totalRewards = cardSums?.[0]?.totalRewards ?? 0;
 
-    // series: nové karty po dnech za posledních 14 dní
-    const from = startOfDay(addDays(now, -13));
-    const to = addDays(startOfDay(now), 1);
+    /* -------------------------------------------------
+     * KPI – event-based (CardEvent)
+     * ------------------------------------------------- */
+    const [stampsToday, stamps7d, rewardsToday, rewards7d] = await Promise.all([
+      CardEvent.countDocuments({
+        merchantId,
+        type: "STAMP_ADDED",
+        createdAt: { $gte: today, $lt: tomorrow },
+      }),
+      CardEvent.countDocuments({
+        merchantId,
+        type: "STAMP_ADDED",
+        createdAt: { $gte: d7, $lt: tomorrow },
+      }),
+      CardEvent.countDocuments({
+        merchantId,
+        type: "REWARD_REDEEMED",
+        createdAt: { $gte: today, $lt: tomorrow },
+      }),
+      CardEvent.countDocuments({
+        merchantId,
+        type: "REWARD_REDEEMED",
+        createdAt: { $gte: d7, $lt: tomorrow },
+      }),
+    ]);
 
-    const dailyAgg = await Card.aggregate([
-      { $match: { merchantId, createdAt: { $gte: from, $lt: to } } },
+    /* -------------------------------------------------
+     * Series – denní grafy z eventů (14 dní)
+     * ------------------------------------------------- */
+    const seriesFrom = startOfDay(addDays(today, -13));
+    const seriesTo = tomorrow;
+
+    const dailyAgg = await CardEvent.aggregate([
+      {
+        $match: {
+          merchantId,
+          createdAt: { $gte: seriesFrom, $lt: seriesTo },
+          type: { $in: ["STAMP_ADDED", "REWARD_REDEEMED"] },
+        },
+      },
       {
         $group: {
           _id: {
+            type: "$type",
             y: { $year: "$createdAt" },
             m: { $month: "$createdAt" },
             d: { $dayOfMonth: "$createdAt" },
@@ -63,41 +102,80 @@ export default async function dashboardRoutes(fastify) {
       { $sort: { "_id.y": 1, "_id.m": 1, "_id.d": 1 } },
     ]);
 
-    const map = new Map();
+    const stampMap = new Map();
+    const rewardMap = new Map();
+
     for (const row of dailyAgg) {
       const y = row._id.y;
       const m = String(row._id.m).padStart(2, "0");
       const d = String(row._id.d).padStart(2, "0");
-      map.set(`${y}-${m}-${d}`, row.count);
+      const key = `${y}-${m}-${d}`;
+
+      if (row._id.type === "STAMP_ADDED") {
+        stampMap.set(key, row.count);
+      }
+      if (row._id.type === "REWARD_REDEEMED") {
+        rewardMap.set(key, row.count);
+      }
     }
 
-    const newCardsDaily = [];
+    const stampsDaily = [];
+    const rewardsDaily = [];
+
     for (let i = 0; i < 14; i++) {
-      const day = startOfDay(addDays(from, i));
+      const day = startOfDay(addDays(seriesFrom, i));
       const y = day.getFullYear();
       const m = String(day.getMonth() + 1).padStart(2, "0");
       const d = String(day.getDate()).padStart(2, "0");
       const key = `${y}-${m}-${d}`;
-      newCardsDaily.push({ day: key, count: map.get(key) ?? 0 });
+
+      stampsDaily.push({ day: key, count: stampMap.get(key) ?? 0 });
+      rewardsDaily.push({ day: key, count: rewardMap.get(key) ?? 0 });
     }
 
-    // “aktivita” v1: poslední vytvořené karty
-    const lastCards = await Card.find({ merchantId })
+    /* -------------------------------------------------
+     * Aktivita – poslední eventy
+     * ------------------------------------------------- */
+    const lastEvents = await CardEvent.find({ merchantId })
       .sort({ createdAt: -1 })
-      .limit(6)
-      .select({ walletToken: 1, createdAt: 1 })
+      .limit(10)
       .lean();
 
-    const activity = lastCards.map((c) => ({
-      type: "card_created",
-      title: "Nová karta vytvořena",
-      meta: `walletToken: ${String(c.walletToken).slice(0, 6)}…`,
-      ts: new Date(c.createdAt).toISOString(),
+    const activity = lastEvents.map((e) => ({
+      type:
+        e.type === "STAMP_ADDED"
+          ? "stamp"
+          : e.type === "REWARD_REDEEMED"
+          ? "reward"
+          : e.type === "CARD_CREATED"
+          ? "card_created"
+          : "note",
+      title:
+        e.type === "STAMP_ADDED"
+          ? "Přidáno razítko"
+          : e.type === "REWARD_REDEEMED"
+          ? "Uplatněna odměna"
+          : e.type === "CARD_CREATED"
+          ? "Nová karta vytvořena"
+          : "Aktualizace karty",
+      meta: `karta ${String(e.walletToken || "").slice(0, 6)}…`,
+      ts: e.createdAt.toISOString(),
     }));
 
     return reply.send({
-      kpis: { activeCards, newCards7d, newCards30d, totalStamps, totalRewards },
-      series: { newCardsDaily },
+      kpis: {
+        activeCards,
+        totalStamps,
+        totalRewards,
+        stampsToday,
+        stamps7d,
+        rewardsToday,
+        rewards7d,
+      },
+      series: {
+        stampsDaily,
+        rewardsDaily,
+      },
       activity,
     });
   });
