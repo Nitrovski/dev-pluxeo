@@ -13,10 +13,13 @@ export default async function meRoutes(fastify) {
       return reply.code(404).send({ error: "Customer not found for this merchant" });
     }
 
+    // ? vrat jen to, co chceš zobrazovat / používat ve FE
     return reply.send({
-      merchantId: userId,
-      customerId: customer.customerId,
-      customerName: customer.name ?? null,
+      name: customer.name ?? null,
+      ico: customer.ico ?? null,
+      phone: customer.phone ?? null,
+      address: customer.address ?? null,
+      websiteUrl: customer.cardContent?.websiteUrl ?? null,
     });
   });
 }
