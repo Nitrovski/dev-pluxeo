@@ -68,7 +68,7 @@ const CustomerSchema = new Schema(
     name: { type: String, required: true },
     email: { type: String, default: null },
     address: { type: String, default: null },
-
+    onboardingCompleted: { type: Boolean, default: false },
     settings: {
       type: CustomerSettingsSchema,
       default: () => ({}),

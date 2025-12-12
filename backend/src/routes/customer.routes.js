@@ -110,6 +110,7 @@ async function customerRoutes(fastify, options) {
           phone,
           ico,
           address,
+          onboardingCompleted: true,
           settings: { freeStampsToReward: 10 },
           cardContent: normalizeCardContent({}),
         });

@@ -13,13 +13,14 @@ export default async function meRoutes(fastify) {
       return reply.code(404).send({ error: "Customer not found for this merchant" });
     }
 
-    // ? vrat jen to, co chceö zobrazovat / pouûÌvat ve FE
+    // ? vrat jen to, co chce≈° zobrazovat / pou≈æ√≠vat ve FE
     return reply.send({
       name: customer.name ?? null,
       ico: customer.ico ?? null,
       phone: customer.phone ?? null,
       address: customer.address ?? null,
       websiteUrl: customer.cardContent?.websiteUrl ?? null,
+      onboardingCompleted: customer.onboardingCompleted === true,
     });
   });
 }
