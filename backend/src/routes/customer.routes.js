@@ -61,51 +61,6 @@ function slugify(s) {
 }
 
 async function customerRoutes(fastify, options) {
-  /**
-   * GET /api/me
-   * Vrátí customerId pro prihlášeného merchanta.
-   * ? Pokud customer neexistuje, automaticky ho vytvorí (auto-create).
-   */
-  fastify.get("/api/me", async (request, reply) => {
-    try {
-      const { isAuthenticated, userId } = getAuth(request);
-      if (!isAuthenticated || !userId) {
-        return reply.code(401).send({ error: "Missing or invalid token" });
-      }
-
-      const merchantId = userId;
-
-      let customer = await Customer.findOne({ merchantId });
-      if (!customer) {
-        // auto-create (stejný princip jako ensure)
-        const name = "My Business";
-        const email = null;
-
-        const base = slugify(name) || "merchant";
-        const customerId = `${base}-${crypto.randomBytes(3).toString("hex")}`;
-
-        customer = await Customer.create({
-          merchantId,
-          customerId,
-          name,
-          email,
-          settings: {
-            freeStampsToReward: 10,
-          },
-          cardContent: normalizeCardContent({}),
-        });
-      }
-
-      return reply.send({
-        merchantId,
-        customerId: customer.customerId,
-        customerName: customer.name ?? null,
-      });
-    } catch (err) {
-      request.log.error(err, "Error in /api/me");
-      return reply.code(500).send({ error: "Error in /api/me" });
-    }
-  });
 
 /**
    * GET /api/onboarding
