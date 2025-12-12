@@ -126,10 +126,13 @@ async function customerRoutes(fastify, options) {
       }
 
       return reply.send({
-        merchantId,
-        customerId: customer.customerId,
-        customerName: customer.name ?? null,
-      });
+  name: customer.name ?? null,
+  ico: customer.ico ?? null,
+  phone: customer.phone ?? null,
+  address: customer.address ?? null,
+  websiteUrl: customer.cardContent?.websiteUrl ?? null,
+  onboardingCompleted: customer.onboardingCompleted === true,
+});
     } catch (err) {
       request.log.error(err, "Error in /api/onboarding");
       return reply.code(500).send({ error: "Error in /api/onboarding" });
