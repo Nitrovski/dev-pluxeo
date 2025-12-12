@@ -120,6 +120,7 @@ async function customerRoutes(fastify, options) {
         if (phone !== null) customer.phone = phone;
         if (ico !== null) customer.ico = ico;
         if (typeof body.address === "string") customer.address = address; // update jen když prišlo
+        customer.onboardingCompleted = true;
 
         await customer.save();
       }
