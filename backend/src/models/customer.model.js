@@ -54,6 +54,9 @@ const CustomerSchema = new Schema(
       index: true,
     },
 
+    phone: { type: String },
+    ico: { type: String },
+
     // verejné ID (slug), co je v QR / URL
     customerId: {
       type: String,
