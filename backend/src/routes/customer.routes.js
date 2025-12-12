@@ -61,6 +61,102 @@ function slugify(s) {
 }
 
 async function customerRoutes(fastify, options) {
+  /**
+   * GET /api/me
+   * Vrátí customerId pro prihlášeného merchanta.
+   * ? Pokud customer neexistuje, automaticky ho vytvorí (auto-create).
+   */
+  fastify.get("/api/me", async (request, reply) => {
+    try {
+      const { isAuthenticated, userId } = getAuth(request);
+      if (!isAuthenticated || !userId) {
+        return reply.code(401).send({ error: "Missing or invalid token" });
+      }
+
+      const merchantId = userId;
+
+      let customer = await Customer.findOne({ merchantId });
+      if (!customer) {
+        // auto-create (stejný princip jako ensure)
+        const name = "My Business";
+        const email = null;
+
+        const base = slugify(name) || "merchant";
+        const customerId = `${base}-${crypto.randomBytes(3).toString("hex")}`;
+
+        customer = await Customer.create({
+          merchantId,
+          customerId,
+          name,
+          email,
+          settings: {
+            freeStampsToReward: 10,
+          },
+          cardContent: normalizeCardContent({}),
+        });
+      }
+
+      return reply.send({
+        merchantId,
+        customerId: customer.customerId,
+        customerName: customer.name ?? null,
+      });
+    } catch (err) {
+      request.log.error(err, "Error in /api/me");
+      return reply.code(500).send({ error: "Error in /api/me" });
+    }
+  });
+
+/**
+   * GET /api/onboarding
+   * Vrátí stránku pro vytvorení názvu podniku
+   */
+fastify.post("/api/onboarding", async (request, reply) => {
+  try {
+    const { isAuthenticated, userId } = getAuth(request);
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
+    }
+
+    const merchantId = userId;
+    const body = request.body || {};
+    const name = typeof body.name === "string" ? body.name.trim() : "";
+    if (!name) {
+      return reply.code(400).send({ error: "name is required" });
+    }
+
+    const email = typeof body.email === "string" ? body.email : null;
+
+    let customer = await Customer.findOne({ merchantId });
+
+    if (!customer) {
+      const base = slugify(name) || "merchant";
+      const customerId = `${base}-${crypto.randomBytes(3).toString("hex")}`;
+
+      customer = await Customer.create({
+        merchantId,
+        customerId,
+        name,
+        email,
+        settings: { freeStampsToReward: 10 },
+        cardContent: normalizeCardContent({}),
+      });
+    } else {
+      customer.name = name;
+      if (email) customer.email = email;
+      await customer.save();
+    }
+
+    return reply.send({
+      merchantId,
+      customerId: customer.customerId,
+      customerName: customer.name ?? null,
+    });
+  } catch (err) {
+    request.log.error(err, "Error in /api/onboarding");
+    return reply.code(500).send({ error: "Error in /api/onboarding" });
+  }
+});
 
 
   /**
@@ -90,11 +186,7 @@ async function customerRoutes(fastify, options) {
       const name = typeof body.name === "string" ? body.name : "My Business";
       const email = typeof body.email === "string" ? body.email : null;
 
-      const base =
-        slugify(name) ||
-        slugify((email || "").split("@")[0]) ||
-        "merchant";
-
+      const base = slugify(name) || slugify((email || "").split("@")[0]) || "merchant";
       const customerId = `${base}-${crypto.randomBytes(3).toString("hex")}`;
 
       const created = await Customer.create({
@@ -114,7 +206,6 @@ async function customerRoutes(fastify, options) {
       });
     } catch (err) {
       request.log.error(err, "Error ensuring customer");
-      // kdyby náhodou narazil na unique customerId collision, FE to muže zavolat znovu
       return reply.code(500).send({ error: "Error ensuring customer" });
     }
   });
@@ -191,11 +282,11 @@ async function customerRoutes(fastify, options) {
   /**
    * GET /api/customers/:customerId/card-content
    * Vrátí pouze obsah/šablonu karty (pro šablonovací stránku)
-   * ?? pouze prihlášený merchant a jen jeho customer.
+   * pouze prihlášený merchant a jen jeho customer.
    *
    * Pokud ješte není nic nastavené -> 404 (FE použije defaulty)
    *
-   * ? Kompatibilita s FE: vrací i freeStampsToReward (z settings)
+   * Kompatibilita s FE: vrací i freeStampsToReward (z settings)
    */
   fastify.get("/api/customers/:customerId/card-content", async (request, reply) => {
     try {
@@ -225,10 +316,7 @@ async function customerRoutes(fastify, options) {
         { $set: { cardContent: normalized } }
       );
 
-      const freeStampsToReward = coercePositiveInt(
-        customer?.settings?.freeStampsToReward,
-        10
-      );
+      const freeStampsToReward = coercePositiveInt(customer?.settings?.freeStampsToReward, 10);
 
       return reply.send({
         ...normalized,
@@ -243,9 +331,9 @@ async function customerRoutes(fastify, options) {
   /**
    * PATCH /api/customers/:customerId/card-content
    * Uloží / updatuje obsah karty (šablona)
-   * ?? pouze prihlášený merchant a jen jeho customer.
+   * pouze prihlášený merchant a jen jeho customer.
    *
-   * ? Kompatibilita s FE: freeStampsToReward z payloadu uložíme do settings
+   * Kompatibilita s FE: freeStampsToReward z payloadu uložíme do settings
    */
   fastify.patch("/api/customers/:customerId/card-content", async (request, reply) => {
     try {
