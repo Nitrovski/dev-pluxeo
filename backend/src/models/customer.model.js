@@ -2,6 +2,27 @@ import mongoose from "mongoose";
 
 const { Schema, model } = mongoose;
 
+// Enrollment (statický QR kód obchodníka)
+const EnrollmentSchema = new Schema(
+  {
+    code: {
+      type: String,
+      default: null, // mužeš pozdeji vygenerovat pri onboardingu
+      index: true,   // volitelné, pokud budeš vyhledávat podle code
+    },
+    status: {
+      type: String,
+      enum: ["active", "disabled"],
+      default: "active",
+    },
+    rotatedAt: {
+      type: Date,
+      default: null,
+    },
+  },
+  { _id: false }
+);
+
 const CustomerSettingsSchema = new Schema(
   {
     freeStampsToReward: {
@@ -18,6 +39,12 @@ const CustomerSettingsSchema = new Schema(
     logoUrl: {
       type: String,
       default: null,
+    },
+
+    // ? enrollment info pro statický QR
+    enrollment: {
+      type: EnrollmentSchema,
+      default: () => ({}),
     },
   },
   { _id: false }
@@ -69,6 +96,7 @@ const CustomerSchema = new Schema(
     email: { type: String, default: null },
     address: { type: String, default: null },
     onboardingCompleted: { type: Boolean, default: false },
+
     settings: {
       type: CustomerSettingsSchema,
       default: () => ({}),

@@ -6,6 +6,7 @@ import cors from '@fastify/cors';
 import { clerkAuthMiddleware } from "./middleware/auth.js"; //import middleware
 import meRoutes from "./routes/me.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
+import { merchantEnrollmentRoutes } from "./routes/merchant.enrollment.routes.js";
 
 
 // Clerk fastify plugin
@@ -72,6 +73,7 @@ const start = async () => {
     fastify.register(cardTemplateRoutes); // pridáni template rout
     fastify.register(meRoutes);
     fastify.register(dashboardRoutes);
+    fastify.register(merchantEnrollmentRoutes);
 
     // Start serveru
     const port = process.env.PORT || 3000;
