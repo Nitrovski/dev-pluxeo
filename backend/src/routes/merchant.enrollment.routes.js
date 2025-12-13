@@ -4,6 +4,7 @@ import { ensureEnrollment } from "../lib/enrollment.js";
 export async function merchantEnrollmentRoutes(fastify) {
   fastify.get("/api/merchant/enrollment", async (request, reply) => {
     try {
+      // ✅ Auth přes middleware (request.userId)
       const merchantId = request.userId;
       if (!merchantId) {
         return reply.code(401).send({ error: "Missing or invalid token" });
@@ -11,7 +12,9 @@ export async function merchantEnrollmentRoutes(fastify) {
 
       const customer = await Customer.findOne({ merchantId });
       if (!customer) {
-        return reply.code(404).send({ error: "Customer profile not found. Run onboarding first." });
+        return reply
+          .code(404)
+          .send({ error: "Customer profile not found. Run onboarding first." });
       }
 
       const enrollment = await ensureEnrollment(customer);
