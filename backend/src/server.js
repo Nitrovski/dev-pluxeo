@@ -8,6 +8,8 @@ import meRoutes from "./routes/me.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import { merchantEnrollmentRoutes } from "./routes/merchant.enrollment.routes.js";
 import enrollRoutes from "./routes/enroll.routes.js";
+import rateLimit from "@fastify/rate-limit";
+
 
 // Clerk fastify plugin
 import { clerkPlugin } from '@clerk/fastify';
@@ -56,6 +58,9 @@ const start = async () => {
       allowedHeaders: ['Content-Type', 'Authorization'],
     });
 
+    await fastify.register(rateLimit, {
+      global: false, // jen na vybrané routy
+    });
     // Clerk plugin musí být registrován PRED routami
     await fastify.register(clerkPlugin, {
       secretKey: clerkSecretKey,
@@ -75,6 +80,7 @@ const start = async () => {
     fastify.register(dashboardRoutes);
     fastify.register(merchantEnrollmentRoutes);
     fastify.register(enrollRoutes);
+
 
     // Start serveru
     const port = process.env.PORT || 3000;
