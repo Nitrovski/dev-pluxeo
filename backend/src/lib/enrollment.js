@@ -5,14 +5,21 @@ export function generateEnrollmentCode() {
 }
 
 export async function ensureEnrollment(customerDoc) {
-  if (!customerDoc.settings) customerDoc.settings = {};
+  if (!customerDoc.settings) {
+    customerDoc.settings = {};
+  }
 
-  if (!customerDoc.settings.enrollment) {
+  // ?? klícový fix: reší i code === null / prázdný
+  if (
+    !customerDoc.settings.enrollment ||
+    !customerDoc.settings.enrollment.code
+  ) {
     customerDoc.settings.enrollment = {
       code: generateEnrollmentCode(),
       status: "active",
-      rotatedAt: null,
+      rotatedAt: new Date(),
     };
+
     await customerDoc.save();
   }
 
