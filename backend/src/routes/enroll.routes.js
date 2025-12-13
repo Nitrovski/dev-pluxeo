@@ -11,7 +11,7 @@ export default async function enrollRoutes(fastify) {
   /**
    * POST /api/enroll
    * Public endpoint: zákazník naskenuje merchant QR a vytvorí se mu karta.
-   * Body: { code: string }
+   * Body: { code: string, clientId: string }
    */
   fastify.post(
     "/api/enroll",
@@ -24,9 +24,13 @@ export default async function enrollRoutes(fastify) {
       try {
         const body = request.body || {};
         const code = String(body.code || "").trim();
+        const clientId = String(body.clientId || "").trim();
 
         if (!code) {
           return reply.code(400).send({ error: "code is required" });
+        }
+        if (!clientId) {
+          return reply.code(400).send({ error: "clientId is required" });
         }
 
         const ip = request.ip;
@@ -35,8 +39,7 @@ export default async function enrollRoutes(fastify) {
         // Najdi merchanta podle enrollment kódu
         const customer = await Customer.findOne({ "settings.enrollment.code": code });
         if (!customer) {
-          // neprozrazuj víc info než je nutné
-          request.log.warn({ ip, ua, code }, "Invalid enrollment code");
+          request.log.warn({ ip, ua }, "Invalid enrollment code");
           return reply.code(404).send({ error: "Invalid enrollment code" });
         }
 
@@ -49,37 +52,79 @@ export default async function enrollRoutes(fastify) {
         // MVP: design/template snapshot bereme z customers.settings.cardContent
         const cardContent = customer.settings?.cardContent || {};
 
-        // vytvor kartu
-        const walletToken = generateWalletToken();
+        // 1) idempotence: pokud už karta pro tohle zarízení existuje, vrat ji
+        const existing = await Card.findOne({ merchantId: customer.merchantId, clientId });
+        if (existing) {
+          request.log.info(
+            { ip, ua, merchantId: customer.merchantId, clientId, cardId: existing._id },
+            "Enroll idempotent hit"
+          );
 
-        const card = await Card.create({
-          merchantId: customer.merchantId,
-          customerId: customer.customerId,
-          walletToken,
-          stamps: 0,
-          rewards: 0,
-          notes: "",
-        });
+          return reply.code(200).send({
+            cardId: existing._id,
+            walletToken: existing.walletToken,
+            merchantName: customer.name,
+            cardContent,
+            wallet: {
+              apple: { supported: false },
+              google: { supported: false },
+            },
+          });
+        }
 
-        request.log.info(
-          { ip, ua, merchantId: customer.merchantId, customerId: customer.customerId, cardId: card._id },
-          "Enroll success"
-        );
+        // 2) vytvor novou kartu
+        try {
+          const walletToken = generateWalletToken();
 
-        return reply.code(201).send({
-          cardId: card._id,
-          walletToken,
+          const card = await Card.create({
+            merchantId: customer.merchantId,
+            customerId: customer.customerId,
+            clientId,
+            walletToken,
+            stamps: 0,
+            rewards: 0,
+            notes: "",
+          });
 
-          // (volitelne) pro FE
-          merchantName: customer.name,
-          cardContent,
+          request.log.info(
+            { ip, ua, merchantId: customer.merchantId, customerId: customer.customerId, clientId, cardId: card._id },
+            "Enroll success"
+          );
 
-          // wallet-ready placeholder (zatím false)
-          wallet: {
-            apple: { supported: false },
-            google: { supported: false },
-          },
-        });
+          return reply.code(201).send({
+            cardId: card._id,
+            walletToken,
+            merchantName: customer.name,
+            cardContent,
+            wallet: {
+              apple: { supported: false },
+              google: { supported: false },
+            },
+          });
+        } catch (err) {
+          // race condition: pokud to paralelne vytvoril jiný request, docti a vrat
+          if (err?.code === 11000) {
+            const card = await Card.findOne({ merchantId: customer.merchantId, clientId });
+            if (card) {
+              request.log.info(
+                { ip, ua, merchantId: customer.merchantId, clientId, cardId: card._id },
+                "Enroll race resolved"
+              );
+
+              return reply.code(200).send({
+                cardId: card._id,
+                walletToken: card.walletToken,
+                merchantName: customer.name,
+                cardContent,
+                wallet: {
+                  apple: { supported: false },
+                  google: { supported: false },
+                },
+              });
+            }
+          }
+          throw err;
+        }
       } catch (err) {
         request.log.error(err, "Enroll error");
         return reply.code(500).send({ error: "Internal server error" });

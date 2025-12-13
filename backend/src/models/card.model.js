@@ -11,6 +11,8 @@ const CardSchema = new Schema(
       required: true,
       index: true,
     },
+    
+    clientId: { type: String, index: true },
 
     // Verejné ID zákazníka (kavárny apod.)
     customerId: {
@@ -45,6 +47,17 @@ const CardSchema = new Schema(
   },
   {
     timestamps: true,
+  }
+);
+
+// ? Unikátní dedupe index
+CardSchema.index(
+  { merchantId: 1, clientId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      clientId: { $type: "string" },
+    },
   }
 );
 
