@@ -7,7 +7,7 @@ import { clerkAuthMiddleware } from "./middleware/auth.js"; //import middleware
 import meRoutes from "./routes/me.routes.js";
 import dashboardRoutes from "./routes/dashboard.routes.js";
 import { merchantEnrollmentRoutes } from "./routes/merchant.enrollment.routes.js";
-
+import enrollRoutes from "./routes/enroll.routes.js";
 
 // Clerk fastify plugin
 import { clerkPlugin } from '@clerk/fastify';
@@ -74,6 +74,7 @@ const start = async () => {
     fastify.register(meRoutes);
     fastify.register(dashboardRoutes);
     fastify.register(merchantEnrollmentRoutes);
+    fastify.register(enrollRoutes);
 
     // Start serveru
     const port = process.env.PORT || 3000;
