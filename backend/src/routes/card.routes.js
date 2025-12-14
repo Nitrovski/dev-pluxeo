@@ -5,9 +5,13 @@ import { CardTemplate } from "../models/cardTemplate.model.js";
 import { getAuth } from "@clerk/fastify";
 import crypto from "crypto";
 import { CardEvent } from "../models/cardEvent.model.js";
+import { normalizeCardContent } from "../utils/normalizeCardContent.js";
 
-// Předpokládám, že normalizeCardContent už někde v souboru máš (nebo je importovaný).
-// Pokud ne, dej vědět a doplním ti ho sem.
+
+// ⚠️ DŮLEŽITÉ:
+// normalizeCardContent musí být dostupné (buď je v tomhle souboru níž,
+// nebo ho importuj např.:
+// import { normalizeCardContent } from "../lib/cardContent.js";
 
 function generateRedeemCode() {
   // scan-friendly: PX-XXXX-XXXX-XXXX
@@ -151,6 +155,7 @@ async function cardRoutes(fastify, options) {
       const { id } = request.params;
       const merchantId = userId;
 
+      // amount: jen integer + rozumný rozsah
       const amountRaw = request.body?.amount;
       const amount = Number.isInteger(amountRaw) ? amountRaw : 1;
 
@@ -163,6 +168,7 @@ async function cardRoutes(fastify, options) {
         return reply.code(404).send({ error: "Card not found" });
       }
 
+      // globální template pro merchanta
       const template = await CardTemplate.findOne({ merchantId }).lean();
       const activeCardType = template?.cardType ?? "stamps";
 
@@ -173,11 +179,9 @@ async function cardRoutes(fastify, options) {
         });
       }
 
+      // threshold z template rules (fallback pro starší data)
       const thresholdRaw =
-        template?.rules?.freeStampsToReward ??
-        template?.freeStampsToReward ??
-        10;
-
+        template?.rules?.freeStampsToReward ?? template?.freeStampsToReward ?? 10;
       const threshold =
         Number.isInteger(thresholdRaw) && thresholdRaw > 0 ? thresholdRaw : 10;
 
@@ -192,10 +196,9 @@ async function cardRoutes(fastify, options) {
       const prevRewards = card.rewards || 0;
       const rewardDelta = newRewards - prevRewards;
 
-      // ✅ vygeneruj redeem kódy pro nové odměny
+      // ✅ vytvoř redeem kódy pro nově získané odměny
       if (rewardDelta > 0) {
         if (!Array.isArray(card.redeemCodes)) card.redeemCodes = [];
-
         const existing = new Set(card.redeemCodes.map((x) => x.code));
 
         for (let i = 0; i < rewardDelta; i++) {
@@ -217,6 +220,7 @@ async function cardRoutes(fastify, options) {
 
       await card.save();
 
+      // event: přidání razítka
       await CardEvent.create({
         merchantId,
         cardId: card._id,
@@ -236,6 +240,7 @@ async function cardRoutes(fastify, options) {
         },
       });
 
+      // event: odměna získána
       if (rewardDelta > 0) {
         await CardEvent.create({
           merchantId,
@@ -267,14 +272,10 @@ async function cardRoutes(fastify, options) {
 
   /**
    * GET /api/cards/:id/public
-   * „Public“ data karty pro mobil / wallet
-   * – zjednodušený pohled.
-   * ⚠️ ZÁMĚRNĚ BEZ AUTH – použije se např. z mobilu / Walletu.
-   *
-   * Nově:
-   * - obsah/vzhled primárně z CardTemplate (globální pro merchanta)
-   * - Customer.cardContent jen jako override (když není prázdné)
-   * - pokud má karta aktivní odměnu, vrací redeemCode + formát z template
+   * Public data pro mobil / wallet (bez auth)
+   * - template je zdroj pravdy (globální pro merchanta)
+   * - customer.cardContent je jen override (když není prázdné)
+   * - vrací payload v1 + legacy top-level fields
    */
   fastify.get("/api/cards/:id/public", async (request, reply) => {
     try {
@@ -303,6 +304,7 @@ async function cardRoutes(fastify, options) {
         return override;
       }
 
+      // base z template
       const baseContent = normalizeCardContent({
         headline: template?.headline ?? "",
         subheadline: template?.subheadline ?? "",
@@ -314,6 +316,7 @@ async function cardRoutes(fastify, options) {
         secondaryColor: template?.secondaryColor ?? "#111827",
       });
 
+      // override z customer
       const customerContent = normalizeCardContent(customer?.cardContent || {});
 
       const finalContent = {
@@ -327,6 +330,7 @@ async function cardRoutes(fastify, options) {
         secondaryColor: pickNonEmpty(customerContent.secondaryColor, baseContent.secondaryColor),
       };
 
+      // program / rules z template
       const cardType = template?.cardType ?? "stamps";
       const freeStampsToReward =
         template?.rules?.freeStampsToReward ?? template?.freeStampsToReward ?? 10;
@@ -334,24 +338,73 @@ async function cardRoutes(fastify, options) {
       const redeemFormat = template?.rules?.redeemFormat ?? "qr";
       const barcodeType = template?.rules?.barcodeType ?? "code128";
 
+      // vyber první aktivní redeem kód
       const activeRedeem =
         Array.isArray(card.redeemCodes)
           ? card.redeemCodes.find((x) => x?.status === "active" && x?.code)
           : null;
 
+      const redeemCode = activeRedeem?.code ?? null;
+      const redeemAvailable = Boolean(redeemCode) && (card.rewards ?? 0) > 0;
+
       const payload = {
-        cardId: card._id,
+        // -------------------------
+        // ✅ v1 kontrakt (nový)
+        // -------------------------
+        version: 1,
+
+        cardId: String(card._id),
+        merchantId: card.merchantId ?? null,
         customerId: card.customerId ?? null,
         customerName: customer?.name ?? null,
 
+        program: {
+          cardType,
+          programName: template?.programName ?? "",
+          rules: {
+            freeStampsToReward,
+          },
+        },
+
+        state: {
+          stamps: card.stamps ?? 0,
+          rewards: card.rewards ?? 0,
+        },
+
+        redeem: {
+          available: redeemAvailable,
+          code: redeemCode,
+          format: redeemFormat,
+          barcodeType,
+        },
+
+        content: {
+          headline: finalContent.headline,
+          subheadline: finalContent.subheadline,
+          openingHours: finalContent.openingHours,
+          customMessage: finalContent.customMessage,
+          websiteUrl: finalContent.websiteUrl,
+          lastUpdatedAt:
+            customer?.cardContent?.lastUpdatedAt || template?.updatedAt || null,
+        },
+
+        theme: {
+          variant: finalContent.themeVariant,
+          primaryColor: finalContent.primaryColor,
+          secondaryColor: finalContent.secondaryColor,
+          logoUrl: customer?.settings?.logoUrl || template?.logoUrl || null,
+        },
+
+        // -------------------------
+        // ✅ LEGACY (dočasně)
+        // -------------------------
         stamps: card.stamps ?? 0,
         rewards: card.rewards ?? 0,
 
         cardType,
         freeStampsToReward,
 
-        // ✅ odměna k uplatnění (pokud existuje)
-        redeemCode: activeRedeem?.code ?? null,
+        redeemCode,
         redeemFormat,
         barcodeType,
 
@@ -367,7 +420,8 @@ async function cardRoutes(fastify, options) {
         secondaryColor: finalContent.secondaryColor,
 
         logoUrl: customer?.settings?.logoUrl || template?.logoUrl || null,
-        lastUpdatedAt: customer?.cardContent?.lastUpdatedAt || template?.updatedAt || null,
+        lastUpdatedAt:
+          customer?.cardContent?.lastUpdatedAt || template?.updatedAt || null,
       };
 
       return reply.send(payload);
@@ -432,7 +486,9 @@ async function cardRoutes(fastify, options) {
       );
 
       if (idx === -1) {
-        return reply.code(400).send({ error: "Invalid or already redeemed code" });
+        return reply
+          .code(400)
+          .send({ error: "Invalid or already redeemed code" });
       }
 
       // uplatni kód + odečti reward
