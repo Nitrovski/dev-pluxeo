@@ -5,13 +5,25 @@ const { Schema } = mongoose;
 const CardTemplateSchema = new Schema(
   {
     merchantId: {
-      type: String,    // Clerk userId
+      type: String,
       required: true,
-      unique: true,    // 1 merchant = 1 šablona
+      index: true,
+      unique: true, // 1 merchant = 1 aktivní template
+    },
+
+    /**
+     * Typ AKTUÁLNÍHO programu
+     */
+    cardType: {
+      type: String,
+      enum: ["stamps", "coupon", "info", "combo"],
+      default: "stamps",
       index: true,
     },
 
-    // Texty
+    /**
+     * Texty / obsah karty (globální)
+     */
     programName: { type: String, default: "" },
     headline: { type: String, default: "" },
     subheadline: { type: String, default: "" },
@@ -19,10 +31,44 @@ const CardTemplateSchema = new Schema(
     openingHours: { type: String, default: "" },
     websiteUrl: { type: String, default: "" },
 
-    // Pravidla
-    freeStampsToReward: { type: Number, default: 10 },
+    /**
+     * Pravidla programu
+     */
+    rules: {
+      freeStampsToReward: {
+        type: Number,
+        default: 10,
+        min: 1,
+        max: 100,
+        validate: {
+          validator: Number.isInteger,
+          message: "freeStampsToReward must be an integer",
+        },
+      },
 
-    // Styl / vzhled
+      redeemFormat: {
+        type: String,
+        enum: ["qr", "barcode"],
+        default: "qr",
+      },
+
+      barcodeType: {
+        type: String,
+        enum: ["code128", "ean13"],
+        default: "code128",
+      },
+
+      couponValue: { type: Number },
+      couponType: {
+        type: String,
+        enum: ["percentage", "fixed"],
+      },
+      couponExpiresInDays: { type: Number },
+    },
+
+    /**
+     * Styl / vzhled
+     */
     themeVariant: {
       type: String,
       enum: ["classic", "stamps", "minimal"],
@@ -34,5 +80,7 @@ const CardTemplateSchema = new Schema(
   },
   { timestamps: true }
 );
+
+CardTemplateSchema.index({ merchantId: 1 }, { unique: true });
 
 export const CardTemplate = mongoose.model("CardTemplate", CardTemplateSchema);

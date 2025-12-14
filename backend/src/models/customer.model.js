@@ -7,8 +7,8 @@ const EnrollmentSchema = new Schema(
   {
     code: {
       type: String,
-      default: null, // mužeš pozdeji vygenerovat pri onboardingu
-      index: true,   // volitelné, pokud budeš vyhledávat podle code
+      default: null,
+      index: true,
     },
     status: {
       type: String,
@@ -25,12 +25,7 @@ const EnrollmentSchema = new Schema(
 
 const CustomerSettingsSchema = new Schema(
   {
-    freeStampsToReward: {
-      type: Number,
-      default: 10,
-    },
-
-    // pokud chceš držet "single theme color" kvuli kompatibilite, nech tu
+    // (volitelné) pokud chceš držet "single theme color" kvuli kompatibilite, nech tu
     themeColor: {
       type: String,
       default: "#FF9900",
@@ -41,7 +36,7 @@ const CustomerSettingsSchema = new Schema(
       default: null,
     },
 
-    // ? enrollment info pro statický QR
+    // enrollment info pro statický QR
     enrollment: {
       type: EnrollmentSchema,
       default: () => ({}),
@@ -50,6 +45,10 @@ const CustomerSettingsSchema = new Schema(
   { _id: false }
 );
 
+/**
+ * CardContent = OVERRIDE obsahu/vzhledu pro konkrétního zákazníka (pokud se používá)
+ * Zdroj pravdy pro "template/program" je CardTemplate (globální pro merchanta).
+ */
 const CardContentSchema = new Schema(
   {
     headline: { type: String, default: "" },
@@ -60,7 +59,7 @@ const CardContentSchema = new Schema(
 
     lastUpdatedAt: { type: Date, default: null },
 
-    // design (tady je zdroj pravdy pro “template”)
+    // design override (ne template)
     themeVariant: {
       type: String,
       enum: ["classic", "stamps", "minimal"],
@@ -88,7 +87,7 @@ const CustomerSchema = new Schema(
     customerId: {
       type: String,
       required: true,
-      unique: true,
+      unique: true, // pokud chceš unikátní globálne napríc celým systémem, nech to
       index: true,
     },
 
@@ -109,5 +108,10 @@ const CustomerSchema = new Schema(
   },
   { timestamps: true }
 );
+
+// ? volitelné do budoucna (NEZAPÍNÁM ti to automaticky):
+// Pokud bys chtel, aby customerId (slug) mohl být stejný u ruzných merchantu,
+// tak zruš unique:true na customerId a použij tento index:
+// CustomerSchema.index({ merchantId: 1, customerId: 1 }, { unique: true });
 
 export const Customer = model("Customer", CustomerSchema);
