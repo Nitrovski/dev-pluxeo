@@ -1,6 +1,39 @@
 import { CardTemplate } from "../models/cardTemplate.model.js";
 import { getAuth } from "@clerk/fastify";
 
+function pickString(v, fallback = "") {
+  if (typeof v === "string") return v;
+  if (v === null || v === undefined) return fallback;
+  return String(v);
+}
+
+function pickNumber(v, fallback) {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function toApi(template, merchantId) {
+  // vracíme tvar, který FE ocekává (CardTemplatePage)
+  return {
+    merchantId,
+
+    programType: template?.programType || "stamps",
+    programName: template?.programName || "",
+    headline: template?.headline || "",
+    subheadline: template?.subheadline || "",
+    customMessage: template?.customMessage || "",
+    openingHours: template?.openingHours || "",
+    websiteUrl: template?.websiteUrl || "",
+
+    freeStampsToReward: template?.rules?.freeStampsToReward ?? 10,
+    couponText: template?.rules?.couponText ?? "",
+
+    primaryColor: template?.primaryColor || "#FF9900",
+    secondaryColor: template?.secondaryColor || "#111827",
+    logoUrl: template?.logoUrl || "",
+  };
+}
+
 async function cardTemplateRoutes(fastify, options) {
   /**
    * GET /api/card-template
@@ -16,27 +49,31 @@ async function cardTemplateRoutes(fastify, options) {
 
       const merchantId = userId;
 
-      let template = await CardTemplate.findOne({ merchantId }).lean();
+      const template = await CardTemplate.findOne({ merchantId }).lean();
 
-      // Pokud šablona ješte neexistuje ? vrátíme default hodnoty
+      // když není, vrátíme default (v API tvaru)
       if (!template) {
-        template = {
-          merchantId,
-          programName: "",
-          headline: "",
-          subheadline: "",
-          customMessage: "",
-          openingHours: "",
-          websiteUrl: "",
-          freeStampsToReward: 10,
-          themeVariant: "classic",
-          primaryColor: "#FF9900",
-          secondaryColor: "#111827",
-          logoUrl: "",
-        };
+        return reply.send(
+          toApi(
+            {
+              programType: "stamps",
+              programName: "",
+              headline: "",
+              subheadline: "",
+              customMessage: "",
+              openingHours: "",
+              websiteUrl: "",
+              rules: { freeStampsToReward: 10, couponText: "" },
+              primaryColor: "#FF9900",
+              secondaryColor: "#111827",
+              logoUrl: "",
+            },
+            merchantId
+          )
+        );
       }
 
-      return reply.send(template);
+      return reply.send(toApi(template, merchantId));
     } catch (err) {
       request.log.error(err, "Error fetching card template");
       return reply.code(500).send({ error: "Error fetching card template" });
@@ -58,36 +95,56 @@ async function cardTemplateRoutes(fastify, options) {
       const merchantId = userId;
       const payload = request.body || {};
 
-      // Povolená pole (aby si obchodník nemohl poslat neco jiného)
-      const fields = [
-        "programName",
-        "headline",
-        "subheadline",
-        "customMessage",
-        "openingHours",
-        "websiteUrl",
-        "freeStampsToReward",
-        "themeVariant",
-        "primaryColor",
-        "secondaryColor",
-        "logoUrl",
-      ];
+      // ? whitelist presne podle FE tvaru
+      const update = {
+        programType: payload.programType, // "stamps" | "coupon"
+        programName: payload.programName,
+        headline: payload.headline,
+        subheadline: payload.subheadline,
+        customMessage: payload.customMessage,
+        openingHours: payload.openingHours,
+        websiteUrl: payload.websiteUrl,
+        primaryColor: payload.primaryColor,
+        secondaryColor: payload.secondaryColor,
+        logoUrl: payload.logoUrl,
 
-      const update = {};
-      for (const key of fields) {
-        if (payload[key] !== undefined) {
-          update[key] = payload[key];
+        // rules mapujeme správne pod rules.*
+        rules: {
+          freeStampsToReward: payload.freeStampsToReward,
+          couponText: payload.couponText,
+        },
+      };
+
+      // ocisti undefined (a u rules nech jen co prišlo)
+      const $set = { merchantId };
+      for (const [k, v] of Object.entries(update)) {
+        if (v === undefined) continue;
+        if (k === "rules") {
+          const rules = {};
+          if (v.freeStampsToReward !== undefined)
+            rules.freeStampsToReward = pickNumber(v.freeStampsToReward, 10);
+          if (v.couponText !== undefined)
+            rules.couponText = pickString(v.couponText, "");
+          if (Object.keys(rules).length > 0) $set.rules = rules;
+        } else if (k === "programType") {
+          $set.programType = v === "coupon" ? "coupon" : "stamps";
+        } else if (k === "logoUrl") {
+          // FE posílá "" nebo url ? v DB muže být ""
+          $set.logoUrl = pickString(v, "");
+        } else if (typeof v === "string") {
+          $set[k] = v;
+        } else {
+          $set[k] = v;
         }
       }
 
-      // Upsert = pokud neexistuje ? vytvorí, pokud existuje ? upraví
       const template = await CardTemplate.findOneAndUpdate(
         { merchantId },
-        { $set: update, merchantId },
+        { $set },
         { new: true, upsert: true }
-      );
+      ).lean();
 
-      return reply.send(template);
+      return reply.send(toApi(template, merchantId));
     } catch (err) {
       request.log.error(err, "Error updating card template");
       return reply.code(500).send({ error: "Error updating card template" });

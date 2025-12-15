@@ -11,6 +11,8 @@ const CardTemplateSchema = new Schema(
       unique: true, // 1 merchant = 1 aktivní template
     },
 
+    programType: { type: String, enum: ["stamps", "coupon"], default: "stamps" },
+    couponText: { type: String, default: "" },
     /**
      * Typ AKTUÁLNÍHO programu
      */
