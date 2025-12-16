@@ -1,9 +1,9 @@
 import crypto from "crypto";
 import { Customer } from "../models/customer.model.js";
 import { Card } from "../models/card.model.js";
+import { CardTemplate } from "../models/cardTemplate.model.js";
 
 function generateWalletToken() {
-  // dlouhý, URL-safe token, prakticky neuhodnutelný
   return crypto.randomBytes(24).toString("base64url");
 }
 
@@ -26,12 +26,8 @@ export default async function enrollRoutes(fastify) {
         const code = String(body.code || "").trim();
         const clientId = String(body.clientId || "").trim();
 
-        if (!code) {
-          return reply.code(400).send({ error: "code is required" });
-        }
-        if (!clientId) {
-          return reply.code(400).send({ error: "clientId is required" });
-        }
+        if (!code) return reply.code(400).send({ error: "code is required" });
+        if (!clientId) return reply.code(400).send({ error: "clientId is required" });
 
         const ip = request.ip;
         const ua = request.headers["user-agent"] || "";
@@ -49,8 +45,19 @@ export default async function enrollRoutes(fastify) {
           return reply.code(403).send({ error: "Enrollment disabled" });
         }
 
-        // MVP: design/template snapshot bereme z customers.settings.cardContent
+        // MVP: content snapshot zatím bereme z customers.settings.cardContent
         const cardContent = customer.settings?.cardContent || {};
+
+        // ? nacti aktuální template (zdroj pravdy pro program)
+        const template = await CardTemplate.findOne({ merchantId: customer.merchantId }).lean();
+
+        const programType =
+          template?.programType || template?.cardType || "stamps"; // backward compatible
+
+        const stampsPerReward =
+          template?.rules?.freeStampsToReward != null
+            ? Number(template.rules.freeStampsToReward)
+            : 10;
 
         // 1) idempotence: pokud už karta pro tohle zarízení existuje, vrat ji
         const existing = await Card.findOne({ merchantId: customer.merchantId, clientId });
@@ -76,7 +83,7 @@ export default async function enrollRoutes(fastify) {
         try {
           const walletToken = generateWalletToken();
 
-          const card = await Card.create({
+          const cardDoc = {
             merchantId: customer.merchantId,
             customerId: customer.customerId,
             clientId,
@@ -84,10 +91,26 @@ export default async function enrollRoutes(fastify) {
             stamps: 0,
             rewards: 0,
             notes: "",
-          });
+
+            // ? nový programový typ na karte (tohle ti dnes chybí)
+            type: programType,
+
+            // ? stamps pravidlo pouze pokud je stamps program
+            stampsPerReward: programType === "stamps" ? stampsPerReward : undefined,
+          };
+
+          const card = await Card.create(cardDoc);
 
           request.log.info(
-            { ip, ua, merchantId: customer.merchantId, customerId: customer.customerId, clientId, cardId: card._id },
+            {
+              ip,
+              ua,
+              merchantId: customer.merchantId,
+              customerId: customer.customerId,
+              clientId,
+              cardId: card._id,
+              type: programType,
+            },
             "Enroll success"
           );
 
