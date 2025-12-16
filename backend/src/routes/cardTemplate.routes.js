@@ -25,6 +25,7 @@ function toApi(template, merchantId) {
     openingHours: template?.openingHours || "",
     websiteUrl: template?.websiteUrl || "",
 
+    // ?? pravidla programu
     freeStampsToReward: template?.rules?.freeStampsToReward ?? 10,
     couponText: template?.rules?.couponText ?? "",
 
@@ -51,7 +52,7 @@ async function cardTemplateRoutes(fastify, options) {
 
       const template = await CardTemplate.findOne({ merchantId }).lean();
 
-      // když není, vrátíme default (v API tvaru)
+      // pokud šablona neexistuje ? vrátíme default
       if (!template) {
         return reply.send(
           toApi(
@@ -63,7 +64,10 @@ async function cardTemplateRoutes(fastify, options) {
               customMessage: "",
               openingHours: "",
               websiteUrl: "",
-              rules: { freeStampsToReward: 10, couponText: "" },
+              rules: {
+                freeStampsToReward: 10,
+                couponText: "",
+              },
               primaryColor: "#FF9900",
               secondaryColor: "#111827",
               logoUrl: "",
@@ -95,7 +99,7 @@ async function cardTemplateRoutes(fastify, options) {
       const merchantId = userId;
       const payload = request.body || {};
 
-      // ? whitelist presne podle FE tvaru
+      // whitelist presne podle FE tvaru
       const update = {
         programType: payload.programType, // "stamps" | "coupon"
         programName: payload.programName,
@@ -108,33 +112,40 @@ async function cardTemplateRoutes(fastify, options) {
         secondaryColor: payload.secondaryColor,
         logoUrl: payload.logoUrl,
 
-        // rules mapujeme správne pod rules.*
         rules: {
           freeStampsToReward: payload.freeStampsToReward,
           couponText: payload.couponText,
         },
       };
 
-      // ocisti undefined (a u rules nech jen co prišlo)
+      // vycisti undefined hodnoty
       const $set = { merchantId };
-      for (const [k, v] of Object.entries(update)) {
-        if (v === undefined) continue;
-        if (k === "rules") {
+
+      for (const [key, value] of Object.entries(update)) {
+        if (value === undefined) continue;
+
+        if (key === "rules") {
           const rules = {};
-          if (v.freeStampsToReward !== undefined)
-            rules.freeStampsToReward = pickNumber(v.freeStampsToReward, 10);
-          if (v.couponText !== undefined)
-            rules.couponText = pickString(v.couponText, "");
-          if (Object.keys(rules).length > 0) $set.rules = rules;
-        } else if (k === "programType") {
-          $set.programType = v === "coupon" ? "coupon" : "stamps";
-        } else if (k === "logoUrl") {
-          // FE posílá "" nebo url ? v DB muže být ""
-          $set.logoUrl = pickString(v, "");
-        } else if (typeof v === "string") {
-          $set[k] = v;
+          if (value.freeStampsToReward !== undefined) {
+            rules.freeStampsToReward = pickNumber(
+              value.freeStampsToReward,
+              10
+            );
+          }
+          if (value.couponText !== undefined) {
+            rules.couponText = pickString(value.couponText, "");
+          }
+          if (Object.keys(rules).length > 0) {
+            $set.rules = rules;
+          }
+        } else if (key === "programType") {
+          $set.programType = value === "coupon" ? "coupon" : "stamps";
+        } else if (key === "logoUrl") {
+          $set.logoUrl = pickString(value, "");
+        } else if (typeof value === "string") {
+          $set[key] = value;
         } else {
-          $set[k] = v;
+          $set[key] = value;
         }
       }
 

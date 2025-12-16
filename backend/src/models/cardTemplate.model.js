@@ -8,17 +8,13 @@ const CardTemplateSchema = new Schema(
       type: String,
       required: true,
       index: true,
-      unique: true, // 1 merchant = 1 aktivní template
+      unique: true,
     },
 
-    programType: { type: String, enum: ["stamps", "coupon"], default: "stamps" },
-    couponText: { type: String, default: "" },
-    /**
-     * Typ AKTUÁLNÍHO programu
-     */
-    cardType: {
+    // ? jediný prepínac programu
+    programType: {
       type: String,
-      enum: ["stamps", "coupon", "info", "combo"],
+      enum: ["stamps", "coupon", "info"],
       default: "stamps",
       index: true,
     },
@@ -48,6 +44,9 @@ const CardTemplateSchema = new Schema(
         },
       },
 
+      // ? kupon text jako “rule”
+      couponText: { type: String, default: "" },
+
       redeemFormat: {
         type: String,
         enum: ["qr", "barcode"],
@@ -60,22 +59,15 @@ const CardTemplateSchema = new Schema(
         default: "code128",
       },
 
+      // zatím mužeš nechat do budoucna (nevadí)
       couponValue: { type: Number },
-      couponType: {
-        type: String,
-        enum: ["percentage", "fixed"],
-      },
+      couponType: { type: String, enum: ["percentage", "fixed"] },
       couponExpiresInDays: { type: Number },
     },
 
     /**
-     * Styl / vzhled
+     * Styl / vzhled (zustává jen barvy + logo)
      */
-    themeVariant: {
-      type: String,
-      enum: ["classic", "stamps", "minimal"],
-      default: "classic",
-    },
     primaryColor: { type: String, default: "#FF9900" },
     secondaryColor: { type: String, default: "#111827" },
     logoUrl: { type: String, default: "" },
