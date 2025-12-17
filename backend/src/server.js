@@ -10,6 +10,7 @@ import { merchantEnrollmentRoutes } from "./routes/merchant.enrollment.routes.js
 import enrollRoutes from "./routes/enroll.routes.js";
 import rateLimit from "@fastify/rate-limit";
 import { merchantScanRoutes } from "./routes/merchant.scan.routes.js";
+import { publicCardRoutes } from "./routes/public.card.routes.js";
 
 
 
@@ -83,7 +84,8 @@ const start = async () => {
     fastify.register(merchantEnrollmentRoutes);
     fastify.register(enrollRoutes);
     fastify.register(merchantScanRoutes);
-
+    fastify.register(publicCardRoutes);
+ 
 
     // Start serveru
     const port = process.env.PORT || 3000;
