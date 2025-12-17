@@ -6,6 +6,8 @@ import { getAuth } from "@clerk/fastify";
 import crypto from "crypto";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { normalizeCardContent } from "../utils/normalizeCardContent.js";
+import { pickRedeemForDisplay } from "../lib/redeemCodes.js";
+
 
 
 // ⚠️ DŮLEŽITÉ:
@@ -196,27 +198,25 @@ async function cardRoutes(fastify, options) {
       const prevRewards = card.rewards || 0;
       const rewardDelta = newRewards - prevRewards;
 
-      // ✅ vytvoř redeem kódy pro nově získané odměny
-      if (rewardDelta > 0) {
-        if (!Array.isArray(card.redeemCodes)) card.redeemCodes = [];
-        const existing = new Set(card.redeemCodes.map((x) => x.code));
-
-        for (let i = 0; i < rewardDelta; i++) {
-          let code = generateRedeemCode();
-          while (existing.has(code)) code = generateRedeemCode();
-          existing.add(code);
-
-          card.redeemCodes.push({
-            code,
-            status: "active",
-            createdAt: new Date(),
-          });
-        }
-      }
-
       card.stamps = newStamps;
       card.rewards = newRewards;
       card.lastEventAt = new Date();
+
+      // ✅ Při získání alespoň jedné odměny vystav (nebo obnov) reward redeem kód.
+      // Pozn.: držíme max 1 aktivní reward kód (PassKit-friendly: jeden barcode).
+      if (rewardDelta > 0) {
+        issueRedeemCode(card, {
+          code: generateRedeemCode(),
+          purpose: "reward",
+          validTo: null,
+          meta: {
+            source: "stamp",
+            threshold,
+            earned: rewardDelta,
+          },
+          rotateStrategy: "expireAndIssue",
+        });
+      }
 
       await card.save();
 
@@ -258,7 +258,8 @@ async function cardRoutes(fastify, options) {
           },
           payload: {
             threshold,
-            redeemCodesIssued: rewardDelta,
+            redeemCodesIssued: 1, // vystavujeme jeden aktivní reward kód (ne rewardDelta kusů)
+            rewardDelta,
           },
         });
       }
@@ -270,12 +271,18 @@ async function cardRoutes(fastify, options) {
     }
   });
 
+
   /**
    * GET /api/cards/:id/public
    * Public data pro mobil / wallet (bez auth)
    * - template je zdroj pravdy (globální pro merchanta)
    * - customer.cardContent je jen override (když není prázdné)
    * - vrací payload v1 + legacy top-level fields
+   *
+   * ✅ NOVĚ:
+   * - podporuje paralelní reward + coupon
+   * - vybírá redeem podle priority (reward → coupon)
+   * - PassKit-ready (pass.barcode je kanonický zdroj)
    */
   fastify.get("/api/cards/:id/public", async (request, reply) => {
     try {
@@ -304,7 +311,21 @@ async function cardRoutes(fastify, options) {
         return override;
       }
 
-      // base z template
+      function mapToPKBarcodeFormat(redeemFormat, barcodeType) {
+        const f = String(redeemFormat || "qr").toLowerCase();
+        if (f === "qr") return "PKBarcodeFormatQR";
+
+        const t = String(barcodeType || "").toLowerCase();
+        if (t.includes("pdf")) return "PKBarcodeFormatPDF417";
+        if (t.includes("aztec")) return "PKBarcodeFormatAztec";
+        if (t.includes("128")) return "PKBarcodeFormatCode128";
+
+        return "PKBarcodeFormatQR";
+      }
+
+      // ------------------------------------------------------------
+      // content (template + customer override)
+      // ------------------------------------------------------------
       const baseContent = normalizeCardContent({
         headline: template?.headline ?? "",
         subheadline: template?.subheadline ?? "",
@@ -316,7 +337,6 @@ async function cardRoutes(fastify, options) {
         secondaryColor: template?.secondaryColor ?? "#111827",
       });
 
-      // override z customer
       const customerContent = normalizeCardContent(customer?.cardContent || {});
 
       const finalContent = {
@@ -330,26 +350,72 @@ async function cardRoutes(fastify, options) {
         secondaryColor: pickNonEmpty(customerContent.secondaryColor, baseContent.secondaryColor),
       };
 
-      // program / rules z template
-      const cardType = template?.cardType ?? "stamps";
+      // ------------------------------------------------------------
+      // program / rules
+      // ------------------------------------------------------------
+      const cardType = card?.type ?? template?.cardType ?? "stamps";
+
       const freeStampsToReward =
         template?.rules?.freeStampsToReward ?? template?.freeStampsToReward ?? 10;
 
       const redeemFormat = template?.rules?.redeemFormat ?? "qr";
       const barcodeType = template?.rules?.barcodeType ?? "code128";
 
-      // vyber první aktivní redeem kód
-      const activeRedeem =
-        Array.isArray(card.redeemCodes)
-          ? card.redeemCodes.find((x) => x?.status === "active" && x?.code)
+      // ------------------------------------------------------------
+      // Redeem selection (reward → coupon)
+      // ------------------------------------------------------------
+      const now = new Date();
+      const activeRedeem = pickRedeemForDisplay(card, now);
+
+      const redeemCodeRaw =
+        activeRedeem && typeof activeRedeem.code === "string"
+          ? activeRedeem.code.trim()
           : null;
 
-      const redeemCode = activeRedeem?.code ?? null;
-      const redeemAvailable = Boolean(redeemCode) && (card.rewards ?? 0) > 0;
+      const redeemPurpose = activeRedeem?.purpose ?? null;
+
+      // dostupnost podle purpose
+      const redeemAvailable =
+        redeemPurpose === "reward"
+          ? Boolean(redeemCodeRaw) && (card.rewards ?? 0) > 0
+          : redeemPurpose === "coupon"
+          ? Boolean(redeemCodeRaw)
+          : false;
+
+      const redeemCode = redeemAvailable ? redeemCodeRaw : null;
+
+      // ------------------------------------------------------------
+      // PassKit-ready projekce
+      // ------------------------------------------------------------
+      const passBarcode =
+        redeemAvailable && redeemCode
+          ? {
+              format: mapToPKBarcodeFormat(redeemFormat, barcodeType),
+              message: redeemCode,
+              messageEncoding: "iso-8859-1",
+              altText:
+                redeemPurpose === "reward"
+                  ? "Odměna dostupná ✅"
+                  : "Kód k uplatnění ✅",
+            }
+          : null;
+
+      const passDisplay = redeemAvailable
+        ? {
+            badge:
+              redeemPurpose === "reward"
+                ? "Odměna dostupná ✅"
+                : "Kupón dostupný ✅",
+            instruction: "Ukažte u pokladny",
+          }
+        : {
+            badge: null,
+            instruction: null,
+          };
 
       const payload = {
         // -------------------------
-        // ✅ v1 kontrakt (nový)
+        // v1 kontrakt
         // -------------------------
         version: 1,
 
@@ -361,9 +427,7 @@ async function cardRoutes(fastify, options) {
         program: {
           cardType,
           programName: template?.programName ?? "",
-          rules: {
-            freeStampsToReward,
-          },
+          rules: cardType === "stamps" ? { freeStampsToReward } : {},
         },
 
         state: {
@@ -374,8 +438,14 @@ async function cardRoutes(fastify, options) {
         redeem: {
           available: redeemAvailable,
           code: redeemCode,
+          purpose: redeemPurpose,
           format: redeemFormat,
           barcodeType,
+        },
+
+        pass: {
+          barcode: passBarcode,
+          display: passDisplay,
         },
 
         content: {
@@ -396,7 +466,7 @@ async function cardRoutes(fastify, options) {
         },
 
         // -------------------------
-        // ✅ LEGACY (dočasně)
+        // LEGACY
         // -------------------------
         stamps: card.stamps ?? 0,
         rewards: card.rewards ?? 0,
@@ -431,13 +501,22 @@ async function cardRoutes(fastify, options) {
     }
   });
 
+
   /**
    * POST /api/cards/:id/redeem
-   * Uplatní 1 odměnu přes redeem kód (scan / barcode / QR)
+   * Uplatní redeem kód (scan / barcode / QR)
    * Body: { code: "PX-...." }
    *
    * ✅ Respektuje aktivní program z CardTemplate (globálně pro merchanta)
+   * ✅ Podporuje:
+   *    - stamps/reward: odečte 1 reward + označí redeemCode jako redeemed
+   *    - coupon: pouze označí redeemCode jako redeemed (bez rewards)
    * ������ Pouze pro přihlášeného merchanta a jen na jeho kartě.
+   *
+   * ✅ NOVĚ:
+   * - rozhoduje podle redeemCode.purpose ("reward" | "coupon"), ne podle card.type
+   * - dovoluje mít na jedné kartě aktivní reward i coupon (jiné kódy)
+   * - respektuje validTo (expirace)
    */
   fastify.post("/api/cards/:id/redeem", async (request, reply) => {
     try {
@@ -462,69 +541,232 @@ async function cardRoutes(fastify, options) {
         return reply.code(404).send({ error: "Card not found" });
       }
 
+      // globální template pro merchanta (zatím necháváme kvůli programName/rules apod.)
       const template = await CardTemplate.findOne({ merchantId }).lean();
       const activeCardType = template?.cardType ?? "stamps";
 
-      if (activeCardType !== "stamps") {
-        return reply.code(409).send({
-          error: "Active program is not stamps",
-          cardType: activeCardType,
-        });
+      // (informativně) efektivní typ karty: primárně card.type, jinak template
+      // Pozn.: už to nepoužíváme k rozhodnutí o redeem, protože redeem je řízen purpose kódu.
+      const effectiveCardType = card.type ?? activeCardType;
+
+      // Pokud by někdy došlo k rozjezdu, zaloguj (NEBLOKUJ 409),
+      // protože coupon redeem může existovat i když je aktivní program "stamps".
+      if (card.type && activeCardType && card.type !== activeCardType) {
+        request.log.warn(
+          { cardType: card.type, activeCardType, cardId: String(card._id) },
+          "Card type differs from active template program (non-blocking)"
+        );
       }
 
-      const currentRewards = card.rewards || 0;
-      if (currentRewards < 1) {
-        return reply.code(400).send({ error: "No rewards available" });
-      }
-
+      // validace redeemCodes
       if (!Array.isArray(card.redeemCodes) || card.redeemCodes.length === 0) {
         return reply.code(400).send({ error: "No redeem codes available" });
       }
 
-      const idx = card.redeemCodes.findIndex(
-        (x) => x?.status === "active" && x?.code === code
-      );
+      const now = new Date();
+
+      // najdi aktivní redeem kód podle code + status + (validTo)
+      const idx = card.redeemCodes.findIndex((x) => {
+        if (!x) return false;
+        if (x.status !== "active") return false;
+        if (typeof x.code !== "string") return false;
+        if (x.code.trim() !== code) return false;
+        if (x.validTo && new Date(x.validTo) <= now) return false;
+        return true;
+      });
 
       if (idx === -1) {
         return reply
           .code(400)
-          .send({ error: "Invalid or already redeemed code" });
+          .send({ error: "Invalid, expired, or already redeemed code" });
       }
 
-      // uplatni kód + odečti reward
-      card.redeemCodes[idx].status = "redeemed";
-      card.redeemCodes[idx].redeemedAt = new Date();
+      const redeem = card.redeemCodes[idx];
+      const purpose = redeem.purpose || "reward"; // backward compatible pro staré záznamy
 
-      card.rewards = currentRewards - 1;
-      card.lastEventAt = new Date();
+      // ------------------------------------------------------------
+      // REWARD: musí existovat reward a při redeem se odečte
+      // ------------------------------------------------------------
+      if (purpose === "reward") {
+        const currentRewards = card.rewards || 0;
+        if (currentRewards < 1) {
+          return reply.code(400).send({ error: "No rewards available" });
+        }
 
-      await card.save();
+        card.redeemCodes[idx].status = "redeemed";
+        card.redeemCodes[idx].redeemedAt = now;
 
-      await CardEvent.create({
-        merchantId,
-        cardId: card._id,
-        walletToken: card.walletToken,
-        type: "REWARD_REDEEMED",
-        deltaStamps: 0,
-        deltaRewards: -1,
-        cardType: activeCardType,
-        templateId: card.templateId ?? null,
-        actor: {
-          type: "merchant",
-          actorId: merchantId,
-          source: "merchant-app",
-        },
-        payload: {
-          code,
-        },
+        card.rewards = currentRewards - 1;
+        card.lastEventAt = now;
+
+        await card.save();
+
+        await CardEvent.create({
+          merchantId,
+          cardId: card._id,
+          walletToken: card.walletToken,
+          type: "REWARD_REDEEMED",
+          deltaStamps: 0,
+          deltaRewards: -1,
+          cardType: effectiveCardType, // info field (neřídí logiku)
+          templateId: card.templateId ?? null,
+          actor: {
+            type: "merchant",
+            actorId: merchantId,
+            source: "merchant-app",
+          },
+          payload: { code, purpose: "reward" },
+        });
+
+        return reply.send(card);
+      }
+
+      // ------------------------------------------------------------
+      // COUPON: pouze označit kód jako redeemed (bez rewards)
+      // ------------------------------------------------------------
+      if (purpose === "coupon") {
+        card.redeemCodes[idx].status = "redeemed";
+        card.redeemCodes[idx].redeemedAt = now;
+
+        card.lastEventAt = now;
+
+        await card.save();
+
+        await CardEvent.create({
+          merchantId,
+          cardId: card._id,
+          walletToken: card.walletToken,
+          type: "COUPON_REDEEMED",
+          deltaStamps: 0,
+          deltaRewards: 0,
+          cardType: effectiveCardType, // info field (neřídí logiku)
+          templateId: card.templateId ?? null,
+          actor: {
+            type: "merchant",
+            actorId: merchantId,
+            source: "merchant-app",
+          },
+          payload: { code, purpose: "coupon", meta: redeem.meta ?? null },
+        });
+
+        return reply.send(card);
+      }
+
+      // ------------------------------------------------------------
+      // Ostatní purpose zatím nepodporujeme
+      // ------------------------------------------------------------
+      return reply.code(409).send({
+        error: "Redeem purpose not supported",
+        purpose,
       });
-
-      return reply.send(card);
     } catch (err) {
-      request.log.error(err, "Error redeeming reward");
-      return reply.code(500).send({ error: "Error redeeming reward" });
+      request.log.error(err, "Error redeeming code");
+      return reply.code(500).send({ error: "Error redeeming code" });
     }
   });
-}
+
+/**
+ * POST /api/cards/:id/redeem/issue
+ * Vydá nový redeem kód (reward / coupon)
+ *
+ * Body:
+ * {
+ *   purpose: "reward" | "coupon",
+ *   validTo?: ISODateString,
+ *   meta?: object
+ * }
+ *
+ * ������ Pouze pro přihlášeného merchanta
+ * ✅ max 1 aktivní redeem kód na purpose (starý se expiroval)
+ * ❌ neuplatňuje kód (jen ho vydá)
+ */
+fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
+  try {
+    const { isAuthenticated, userId } = getAuth(request);
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
+    }
+
+    const { id } = request.params;
+    const merchantId = userId;
+
+    const purposeRaw = request.body?.purpose;
+    const purpose = purposeRaw === "coupon" ? "coupon" : "reward";
+
+    const validToRaw = request.body?.validTo;
+    const meta = request.body?.meta ?? null;
+
+    const validTo = validToRaw ? new Date(validToRaw) : null;
+    if (validTo && isNaN(validTo.getTime())) {
+      return reply.code(400).send({ error: "Invalid validTo date" });
+    }
+
+    const card = await Card.findOne({ _id: id, merchantId });
+    if (!card) {
+      return reply.code(404).send({ error: "Card not found" });
+    }
+
+    // ------------------------------------------------------------
+    // Generuj nový redeem kód
+    // ------------------------------------------------------------
+    const code = generateRedeemCode();
+
+    // Vydání redeem kódu (helper řeší expiraci starého)
+    issueRedeemCode(card, {
+      code,
+      purpose,
+      validTo,
+      meta,
+      rotateStrategy: "expireAndIssue",
+    });
+
+    card.lastEventAt = new Date();
+    await card.save();
+
+    // ------------------------------------------------------------
+    // Audit log
+    // ------------------------------------------------------------
+    await CardEvent.create({
+      merchantId,
+      cardId: card._id,
+      walletToken: card.walletToken,
+      type: purpose === "reward" ? "REWARD_ISSUED" : "COUPON_ISSUED",
+      deltaStamps: 0,
+      deltaRewards: 0,
+      cardType: card.type ?? null,
+      templateId: card.templateId ?? null,
+      actor: {
+        type: "merchant",
+        actorId: merchantId,
+        source: "merchant-app",
+      },
+      payload: {
+        code,
+        purpose,
+        validTo,
+        meta,
+      },
+    });
+
+    return reply.send({
+      ok: true,
+      cardId: String(card._id),
+      issued: {
+        code,
+        purpose,
+        validTo,
+        meta,
+      },
+    });
+  } catch (err) {
+    if (err?.code === "ACTIVE_REDEEM_EXISTS") {
+      return reply.code(409).send({ error: "Active redeem already exists" });
+    }
+
+    request.log.error(err, "Error issuing redeem code");
+    return reply.code(500).send({ error: "Error issuing redeem code" });
+  }
+});
+
 
 export default cardRoutes;

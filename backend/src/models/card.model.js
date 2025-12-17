@@ -7,19 +7,51 @@ const RedeemCodeSchema = new Schema(
     // plaintext kód (scan-friendly)
     code: { type: String, required: true },
 
-    // active = ceká na uplatnení, redeemed = už použito
+    // reward = odmena za razítka, coupon = slevový kupon
+    purpose: {
+      type: String,
+      enum: ["reward", "coupon"],
+      default: "reward",
+      index: true,
+    },
+
+    // active = ceká na uplatnení, redeemed = použito, expired = neplatné
     status: {
       type: String,
-      enum: ["active", "redeemed"],
+      enum: ["active", "redeemed", "expired"],
       default: "active",
       index: true,
     },
 
+    // volitelná expirace (hlavne pro coupon)
+    validTo: { type: Date, default: null },
+
+    // volitelne metadata (napr. couponId, sleva, campaign…)
+    meta: { type: Schema.Types.Mixed, default: null },
+
     createdAt: { type: Date, default: Date.now },
     redeemedAt: { type: Date, required: false },
   },
-  { _id: false } // at to nevytvárí _id pro každý kód (cistší a menší)
+  { _id: false }
 );
+
+
+const ShareCardSchema = new Schema(
+  {
+    // verejný share kód (random, scan-friendly)
+    code: { type: String, default: null, index: true },
+
+    status: {
+      type: String,
+      enum: ["active", "disabled"],
+      default: "active",
+    },
+
+    rotatedAt: { type: Date, default: null },
+  },
+  { _id: false }
+);
+
 
 const CardSchema = new Schema(
   {
@@ -36,6 +68,11 @@ const CardSchema = new Schema(
       type: String,
       required: false,
       index: true,
+    },
+    
+    share: {
+       type: ShareCardSchema,
+       default: () => ({}),
     },
 
     walletToken: {

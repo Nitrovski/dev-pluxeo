@@ -9,6 +9,8 @@ import dashboardRoutes from "./routes/dashboard.routes.js";
 import { merchantEnrollmentRoutes } from "./routes/merchant.enrollment.routes.js";
 import enrollRoutes from "./routes/enroll.routes.js";
 import rateLimit from "@fastify/rate-limit";
+import { merchantScanRoutes } from "./routes/merchant.scan.routes.js";
+
 
 
 // Clerk fastify plugin
@@ -80,6 +82,7 @@ const start = async () => {
     fastify.register(dashboardRoutes);
     fastify.register(merchantEnrollmentRoutes);
     fastify.register(enrollRoutes);
+    fastify.register(merchantScanRoutes);
 
 
     // Start serveru
