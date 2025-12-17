@@ -6,7 +6,8 @@ import { getAuth } from "@clerk/fastify";
 import crypto from "crypto";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { normalizeCardContent } from "../utils/normalizeCardContent.js";
-import { pickRedeemForDisplay } from "../lib/redeemCodes.js";
+import { pickRedeemForDisplay, issueRedeemCode } from "../lib/redeemCodes.js";
+
 
 
 
@@ -88,6 +89,109 @@ async function cardRoutes(fastify, options) {
       });
     }
   });
+
+/**
+ * POST /api/cards/:id/redeem/issue
+ * Vydá nový redeem kód (reward / coupon)
+ *
+ * Body:
+ * {
+ *   purpose: "reward" | "coupon",
+ *   validTo?: ISODateString,
+ *   meta?: object
+ * }
+ *
+ * ������ Pouze pro přihlášeného merchanta
+ * ✅ max 1 aktivní redeem kód na purpose (starý se expiroval)
+ * ❌ neuplatňuje kód (jen ho vydá)
+ */
+fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
+  try {
+    const { isAuthenticated, userId } = getAuth(request);
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
+    }
+
+    const { id } = request.params;
+    const merchantId = userId;
+
+    const purposeRaw = request.body?.purpose;
+    const purpose = purposeRaw === "coupon" ? "coupon" : "reward";
+
+    const validToRaw = request.body?.validTo;
+    const meta = request.body?.meta ?? null;
+
+    const validTo = validToRaw ? new Date(validToRaw) : null;
+    if (validTo && isNaN(validTo.getTime())) {
+      return reply.code(400).send({ error: "Invalid validTo date" });
+    }
+
+    const card = await Card.findOne({ _id: id, merchantId });
+    if (!card) {
+      return reply.code(404).send({ error: "Card not found" });
+    }
+
+    // ------------------------------------------------------------
+    // Generuj nový redeem kód
+    // ------------------------------------------------------------
+    const code = generateRedeemCode();
+
+    // Vydání redeem kódu (helper řeší expiraci starého)
+    issueRedeemCode(card, {
+      code,
+      purpose,
+      validTo,
+      meta,
+      rotateStrategy: "expireAndIssue",
+    });
+
+    card.lastEventAt = new Date();
+    await card.save();
+
+    // ------------------------------------------------------------
+    // Audit log
+    // ------------------------------------------------------------
+    await CardEvent.create({
+      merchantId,
+      cardId: card._id,
+      walletToken: card.walletToken,
+      type: purpose === "reward" ? "REWARD_ISSUED" : "COUPON_ISSUED",
+      deltaStamps: 0,
+      deltaRewards: 0,
+      cardType: card.type ?? null,
+      templateId: card.templateId ?? null,
+      actor: {
+        type: "merchant",
+        actorId: merchantId,
+        source: "merchant-app",
+      },
+      payload: {
+        code,
+        purpose,
+        validTo,
+        meta,
+      },
+    });
+
+    return reply.send({
+      ok: true,
+      cardId: String(card._id),
+      issued: {
+        code,
+        purpose,
+        validTo,
+        meta,
+      },
+    });
+  } catch (err) {
+    if (err?.code === "ACTIVE_REDEEM_EXISTS") {
+      return reply.code(409).send({ error: "Active redeem already exists" });
+    }
+
+    request.log.error(err, "Error issuing redeem code");
+    return reply.code(500).send({ error: "Error issuing redeem code" });
+  }
+});
 
   /**
    * GET /api/cards
@@ -665,108 +769,6 @@ async function cardRoutes(fastify, options) {
     }
   });
 
-/**
- * POST /api/cards/:id/redeem/issue
- * Vydá nový redeem kód (reward / coupon)
- *
- * Body:
- * {
- *   purpose: "reward" | "coupon",
- *   validTo?: ISODateString,
- *   meta?: object
- * }
- *
- * ������ Pouze pro přihlášeného merchanta
- * ✅ max 1 aktivní redeem kód na purpose (starý se expiroval)
- * ❌ neuplatňuje kód (jen ho vydá)
- */
-fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
-  try {
-    const { isAuthenticated, userId } = getAuth(request);
-    if (!isAuthenticated || !userId) {
-      return reply.code(401).send({ error: "Missing or invalid token" });
-    }
-
-    const { id } = request.params;
-    const merchantId = userId;
-
-    const purposeRaw = request.body?.purpose;
-    const purpose = purposeRaw === "coupon" ? "coupon" : "reward";
-
-    const validToRaw = request.body?.validTo;
-    const meta = request.body?.meta ?? null;
-
-    const validTo = validToRaw ? new Date(validToRaw) : null;
-    if (validTo && isNaN(validTo.getTime())) {
-      return reply.code(400).send({ error: "Invalid validTo date" });
-    }
-
-    const card = await Card.findOne({ _id: id, merchantId });
-    if (!card) {
-      return reply.code(404).send({ error: "Card not found" });
-    }
-
-    // ------------------------------------------------------------
-    // Generuj nový redeem kód
-    // ------------------------------------------------------------
-    const code = generateRedeemCode();
-
-    // Vydání redeem kódu (helper řeší expiraci starého)
-    issueRedeemCode(card, {
-      code,
-      purpose,
-      validTo,
-      meta,
-      rotateStrategy: "expireAndIssue",
-    });
-
-    card.lastEventAt = new Date();
-    await card.save();
-
-    // ------------------------------------------------------------
-    // Audit log
-    // ------------------------------------------------------------
-    await CardEvent.create({
-      merchantId,
-      cardId: card._id,
-      walletToken: card.walletToken,
-      type: purpose === "reward" ? "REWARD_ISSUED" : "COUPON_ISSUED",
-      deltaStamps: 0,
-      deltaRewards: 0,
-      cardType: card.type ?? null,
-      templateId: card.templateId ?? null,
-      actor: {
-        type: "merchant",
-        actorId: merchantId,
-        source: "merchant-app",
-      },
-      payload: {
-        code,
-        purpose,
-        validTo,
-        meta,
-      },
-    });
-
-    return reply.send({
-      ok: true,
-      cardId: String(card._id),
-      issued: {
-        code,
-        purpose,
-        validTo,
-        meta,
-      },
-    });
-  } catch (err) {
-    if (err?.code === "ACTIVE_REDEEM_EXISTS") {
-      return reply.code(409).send({ error: "Active redeem already exists" });
-    }
-
-    request.log.error(err, "Error issuing redeem code");
-    return reply.code(500).send({ error: "Error issuing redeem code" });
-  }
-});
 
 
 export default cardRoutes;
