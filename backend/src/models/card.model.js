@@ -2,15 +2,20 @@ import mongoose from "mongoose";
 
 const { Schema, model } = mongoose;
 
+/**
+ * Redeem code subdocument
+ * - udržujeme historii: active -> redeemed/expired
+ */
 const RedeemCodeSchema = new Schema(
   {
     // plaintext kód (scan-friendly)
-    code: { type: String, required: true },
+    code: { type: String, required: true, trim: true },
 
     // reward = odmena za razítka, coupon = slevový kupon
     purpose: {
       type: String,
       enum: ["reward", "coupon"],
+      required: true,
       default: "reward",
       index: true,
     },
@@ -19,6 +24,7 @@ const RedeemCodeSchema = new Schema(
     status: {
       type: String,
       enum: ["active", "redeemed", "expired"],
+      required: true,
       default: "active",
       index: true,
     },
@@ -30,11 +36,10 @@ const RedeemCodeSchema = new Schema(
     meta: { type: Schema.Types.Mixed, default: null },
 
     createdAt: { type: Date, default: Date.now },
-    redeemedAt: { type: Date, required: false },
+    redeemedAt: { type: Date, default: null },
   },
   { _id: false }
 );
-
 
 const ShareCardSchema = new Schema(
   {
@@ -52,7 +57,6 @@ const ShareCardSchema = new Schema(
   { _id: false }
 );
 
-
 const CardSchema = new Schema(
   {
     merchantId: {
@@ -62,6 +66,7 @@ const CardSchema = new Schema(
       index: true,
     },
 
+    // dedupe pro enroll (FE posílá clientId)
     clientId: { type: String, index: true },
 
     customerId: {
@@ -69,16 +74,17 @@ const CardSchema = new Schema(
       required: false,
       index: true,
     },
-    
+
     share: {
-       type: ShareCardSchema,
-       default: () => ({}),
+      type: ShareCardSchema,
+      default: () => ({}),
     },
 
     walletToken: {
       type: String,
       required: true,
       unique: true,
+      index: true,
     },
 
     // (zatím necháváme — pozdeji mužeme odstranit, protože program je globální)
@@ -114,7 +120,8 @@ const CardSchema = new Schema(
       min: 0,
     },
 
-    // ? NOVÉ: seznam redeem kódu (plaintext), pro uplatnení odmen
+    // seznam redeem kódu (plaintext), pro uplatnení odmen / couponu
+    // držíme historii, ale public payload vybírá jen 1 aktivní dle priority
     redeemCodes: {
       type: [RedeemCodeSchema],
       default: [],
@@ -122,17 +129,22 @@ const CardSchema = new Schema(
 
     notes: {
       type: String,
+      default: "",
     },
 
+    // typ programu (zatím)
     type: {
       type: String,
       default: "stamps",
+      index: true,
     },
   },
   { timestamps: true }
 );
 
-// dedupe index
+/**
+ * Dedupe index pro enroll: merchantId + clientId musí být unikátní, pokud clientId existuje
+ */
 CardSchema.index(
   { merchantId: 1, clientId: 1 },
   {
@@ -143,10 +155,13 @@ CardSchema.index(
   }
 );
 
-// (volitelné, ale doporucené) aby nebyly duplicity redeem kódu v jedné karte
+/**
+ * Scan lookup index: merchantId + redeemCodes.code (NE-unique)
+ * - potrebujeme rychle najít kartu podle redeem kódu
+ * - unikátnost kódu rešíme generátorem (a prípadne pozdeji globálním unique)
+ */
 CardSchema.index(
-  { merchantId: 1, "redeemCodes.code": 1 },
-  { unique: true, partialFilterExpression: { "redeemCodes.code": { $type: "string" } } }
+  { merchantId: 1, "redeemCodes.code": 1 }
 );
 
 export const Card = model("Card", CardSchema);
