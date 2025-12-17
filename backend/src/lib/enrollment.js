@@ -7,27 +7,32 @@ export function generateEnrollmentCode() {
 
 export async function ensureEnrollment(customerDoc) {
   if (!customerDoc.settings) customerDoc.settings = {};
+  if (!customerDoc.settings.enrollment) customerDoc.settings.enrollment = {};
 
-  if (!customerDoc.settings.enrollment) {
-    customerDoc.settings.enrollment = {
-      code: generateEnrollmentCode(),
-      status: "active",
-      rotatedAt: new Date().toISOString(),
-      rotations: [], // ? historie rotací
-    };
+  const e = customerDoc.settings.enrollment;
+
+  // ? generuj kód i když enrollment existuje, ale code je null / prázdný
+  if (!e.code || typeof e.code !== "string" || !e.code.trim()) {
+    e.code = generateEnrollmentCode();
+    e.status = "active";
+    e.rotatedAt = new Date();
+    e.rotations = []; // init rotations
     await customerDoc.save();
   }
 
-  // zajištení defaultu i pro staré dokumenty
-  if (!Array.isArray(customerDoc.settings.enrollment.rotations)) {
-    customerDoc.settings.enrollment.rotations = [];
-  }
-  if (customerDoc.settings.enrollment.rotatedAt instanceof Date) {
-    customerDoc.settings.enrollment.rotatedAt = customerDoc.settings.enrollment.rotatedAt.toISOString();
+  // ? jistota kompatibility (kdyby se nekde uložil string)
+  if (e.rotatedAt && !(e.rotatedAt instanceof Date)) {
+    const d = new Date(e.rotatedAt);
+    e.rotatedAt = Number.isFinite(d.getTime()) ? d : null;
   }
 
-  return customerDoc.settings.enrollment;
+  if (!Array.isArray(e.rotations)) {
+    e.rotations = [];
+  }
+
+  return e;
 }
+
 
 export function enforceRotationLimit(enrollment, maxPerDay = 3) {
   const now = Date.now();

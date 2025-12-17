@@ -19,9 +19,15 @@ const EnrollmentSchema = new Schema(
       type: Date,
       default: null,
     },
+    // ? historie rotací (pro limit 3/24h)
+    rotations: {
+      type: [Date],
+      default: [],
+    },
   },
   { _id: false }
 );
+
 
 const CustomerSettingsSchema = new Schema(
   {
