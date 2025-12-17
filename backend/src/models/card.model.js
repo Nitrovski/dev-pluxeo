@@ -20,6 +20,10 @@ const RedeemCodeSchema = new Schema(
       index: true,
     },
 
+    // audit expirace
+    expiredAt: { type: Date, default: null },
+
+
     // active = ceká na uplatnení, redeemed = použito, expired = neplatné
     status: {
       type: String,

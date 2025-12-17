@@ -9,6 +9,11 @@ function normToken(v) {
   return String(v || "").trim();
 }
 
+// ?? Anti double-scan protection (MVP)
+// ZDE nastavuješ, jak casto muže merchant pridat razítko na jednu kartu.
+// Napr. 60_000 = max 1 stamp za 1 minutu.
+const STAMP_COOLDOWN_MS = 60_000; // 1 stamp / 1 min
+
 // scan-friendly: PX-XXXX-XXXX-XXXX
 function generateRedeemCode() {
   const raw = crypto.randomBytes(8).toString("base64url").toUpperCase();
@@ -38,7 +43,9 @@ export async function merchantStampRoutes(fastify) {
       }
 
       const merchantId = userId;
-      const token = normToken(request.body?.code || request.body?.token || request.body?.walletToken);
+      const token = normToken(
+        request.body?.code || request.body?.token || request.body?.walletToken
+      );
 
       if (!token) {
         return reply.code(400).send({ error: "code (walletToken) is required" });
@@ -53,6 +60,20 @@ export async function merchantStampRoutes(fastify) {
         return reply.code(404).send({ error: "card not found" }); // schválne 404 (neprozrazuj existenci)
       }
 
+      // 2.5) anti double-scan guard (server-side pojistka)
+      // Pokud nekdo omylem / bugem pošle více requestu (kamera, HW scanner),
+      // tak dovolíme max 1 stamp za STAMP_COOLDOWN_MS.
+      const nowMs = Date.now();
+      if (card.lastEventAt) {
+        const diff = nowMs - new Date(card.lastEventAt).getTime();
+        if (diff < STAMP_COOLDOWN_MS) {
+          return reply.code(429).send({
+            error: "stamp throttled",
+            retryAfterMs: STAMP_COOLDOWN_MS - diff,
+          });
+        }
+      }
+
       // 3) zjisti threshold z Customer nastavení (nebo fallback)
       const customerDoc = await Customer.findOne({ merchantId });
       const threshold = resolveThreshold(customerDoc);
@@ -63,8 +84,8 @@ export async function merchantStampRoutes(fastify) {
       card.stamps = nextStamps;
 
       // každých "threshold" razítek -> +1 reward + issue redeemCode
-      // (když máš jiná pravidla, upravíme — ale tohle je nejcitelnejší MVP)
-      const crossed = Math.floor(nextStamps / threshold) - Math.floor(prevStamps / threshold);
+      const crossed =
+        Math.floor(nextStamps / threshold) - Math.floor(prevStamps / threshold);
       let rewardDelta = 0;
 
       if (crossed > 0) {
@@ -84,6 +105,9 @@ export async function merchantStampRoutes(fastify) {
           rotateStrategy: "expireAndIssue",
         });
       }
+
+      // zaznamenáme poslední stamp event (pro rate-limit)
+      card.lastEventAt = new Date(nowMs);
 
       await card.save();
 
