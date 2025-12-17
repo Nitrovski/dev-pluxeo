@@ -768,7 +768,7 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
       return reply.code(500).send({ error: "Error redeeming code" });
     }
   });
-
+}
 
 
 export default cardRoutes;
