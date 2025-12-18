@@ -66,4 +66,65 @@ export async function merchantStampRoutes(fastify) {
         }
       }
 
-      // 3) zjisti threshold z Customer
+      // 3) zjisti threshold z Customer nastavení (nebo fallback)
+      const customerDoc = await Customer.findOne({ merchantId });
+      const threshold = resolveThreshold(customerDoc);
+
+      // 4) stamp + prípadne reward issue
+      const prevStamps = Number(card.stamps || 0);
+      const nextStamps = prevStamps + 1;
+      card.stamps = nextStamps;
+
+      // každých "threshold" razítek -> +1 reward + issue redeemCode
+      const crossed =
+        Math.floor(nextStamps / threshold) - Math.floor(prevStamps / threshold);
+      let rewardDelta = 0;
+
+      if (crossed > 0) {
+        rewardDelta = crossed;
+        card.rewards = Number(card.rewards || 0) + rewardDelta;
+
+        // vydáme/rotujeme redeemCode pro reward (1 aktivní)
+        issueRedeemCode(card, {
+          code: generateRedeemCode(),
+          purpose: "reward",
+          validTo: null,
+          meta: {
+            source: "stamp",
+            threshold,
+            earned: rewardDelta,
+          },
+          rotateStrategy: "expireAndIssue",
+        });
+      }
+
+      // zaznamenáme poslední stamp event (pro rate-limit)
+      card.lastEventAt = new Date(nowMs);
+
+      await card.save();
+
+      // 5) vrat updated public payload
+      const publicPayload = await buildPublicCardPayload(String(card._id));
+
+      return reply.send({
+        ok: true,
+        stamped: {
+          added: 1,
+          threshold,
+          rewardDelta,
+          stamps: card.stamps,
+          rewards: card.rewards,
+        },
+        card: {
+          cardId: String(card._id),
+          customerId: card.customerId,
+          stamps: card.stamps,
+          rewards: card.rewards,
+        },
+        public: publicPayload,
+      });
+    } catch (err) {
+      return reply.code(500).send({ error: err?.message || "stamp failed" });
+    }
+  });
+}
