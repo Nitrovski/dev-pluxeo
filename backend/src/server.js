@@ -13,7 +13,12 @@ import { merchantScanRoutes } from "./routes/merchant.scan.routes.js";
 import { publicCardRoutes } from "./routes/public.card.routes.js";
 import { merchantStampRoutes } from "./routes/merchant.stamp.routes.js";
 
+import { Card } from "./models/card.model.js";
 
+console.log(
+  "RedeemCode schema paths:",
+  Object.keys(Card.schema.path("redeemCodes").schema.paths)
+);
 
 
 // Clerk fastify plugin
