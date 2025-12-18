@@ -8,26 +8,55 @@ const { Schema, model } = mongoose;
  */
 const RedeemCodeSchema = new Schema(
   {
-    code: { type: String, required: true },
-    purpose: { type: String, enum: ["reward", "coupon"], required: true },
-    status: { type: String, enum: ["active", "redeemed", "expired"], default: "active" },
+    // plaintext kód (scan-friendly)
+    code: {
+      type: String,
+      required: true,
+      trim: true,
+      index: true,
+    },
 
+    // normalizovaný klíc pro scan (bez pomlcek)
+    codeKey: {
+      type: String,
+      required: true,
+      index: true,
+    },
+
+    // reward = odmena za razítka, coupon = slevový kupon
+    purpose: {
+      type: String,
+      enum: ["reward", "coupon"],
+      required: true,
+      default: "reward",
+      index: true,
+    },
+
+    // active = ceká na uplatnení, redeemed = použito, expired = neplatné
+    status: {
+      type: String,
+      enum: ["active", "redeemed", "expired"],
+      required: true,
+      default: "active",
+      index: true,
+    },
+
+    // volitelná expirace (hlavne pro coupon)
     validTo: { type: Date, default: null },
-    createdAt: { type: Date, default: () => new Date() },
+
+    // audit
+    createdAt: { type: Date, default: Date.now },
     redeemedAt: { type: Date, default: null },
     expiredAt: { type: Date, default: null },
 
+    // volitelné metadata
     meta: { type: Schema.Types.Mixed, default: null },
-
-    // (doporuceno) pro tolerantní vyhledávání bez pomlcek
-    codeKey: { type: String, default: null, index: true },
   },
-  { _id: false, timestamps: true }
+  {
+    _id: false,
+    timestamps: true, // ?? KLÍCOVÉ
+  }
 );
-
-CardSchema.add({
-  redeemCodes: { type: [RedeemCodeSchema], default: [] },
-});
 
 
 const ShareCardSchema = new Schema(
