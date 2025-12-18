@@ -15,11 +15,13 @@ import { merchantStampRoutes } from "./routes/merchant.stamp.routes.js";
 
 import { Card } from "./models/card.model.js";
 
-console.log(
-  "RedeemCode schema paths:",
-  Object.keys(Card.schema.path("redeemCodes").schema.paths)
-);
+console.log("Mongoose models loaded:", Object.keys(mongoose.models));
 
+const rcPath = Card.schema.path("redeemCodes");
+console.log("RedeemCodes path instance:", rcPath?.instance);
+
+const rcSchema = rcPath?.schema;
+console.log("RedeemCode schema paths:", rcSchema ? Object.keys(rcSchema.paths) : null);
 
 // Clerk fastify plugin
 import { clerkPlugin } from '@clerk/fastify';
