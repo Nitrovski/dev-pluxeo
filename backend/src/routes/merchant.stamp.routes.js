@@ -10,9 +10,8 @@ function normToken(v) {
 }
 
 // ?? Anti double-scan protection (MVP)
-// ZDE nastavuješ, jak casto muže merchant pridat razítko na jednu kartu.
-// Napr. 60_000 = max 1 stamp za 1 minutu.
-const STAMP_COOLDOWN_MS = 60_000; // 1 stamp / 1 min
+// 1 stamp / 1 min
+const STAMP_COOLDOWN_MS = 60_000;
 
 // scan-friendly: PX-XXXX-XXXX-XXXX
 function generateRedeemCode() {
@@ -30,8 +29,8 @@ function resolveThreshold(customerDoc) {
     customerDoc?.settings?.activeTemplate?.freeStampsToReward,
   ];
 
-  const n = Number(candidates.find((x) => Number.isFinite(Number(x))));
-  return Number.isFinite(n) && n > 0 ? n : 10; // fallback 10 (jen pro MVP)
+  const n = candidates.find((x) => typeof x === "number" && x > 0);
+  return typeof n === "number" && n > 0 ? n : 10; // fallback 10
 }
 
 export async function merchantStampRoutes(fastify) {
@@ -51,18 +50,11 @@ export async function merchantStampRoutes(fastify) {
         return reply.code(400).send({ error: "code (walletToken) is required" });
       }
 
-      // 1) najdi kartu podle walletTokenu
-      const card = await Card.findOne({ walletToken: token });
+      // 1) najdi kartu podle merchantId + walletTokenu (eliminuje mismatch a je to bezpecnejší)
+      const card = await Card.findOne({ merchantId, walletToken: token });
       if (!card) return reply.code(404).send({ error: "card not found" });
 
-      // 2) ownership check
-      if (card.merchantId !== merchantId) {
-        return reply.code(404).send({ error: "card not found" }); // schválne 404 (neprozrazuj existenci)
-      }
-
-      // 2.5) anti double-scan guard (server-side pojistka)
-      // Pokud nekdo omylem / bugem pošle více requestu (kamera, HW scanner),
-      // tak dovolíme max 1 stamp za STAMP_COOLDOWN_MS.
+      // 2) anti double-scan guard (server-side pojistka)
       const nowMs = Date.now();
       if (card.lastEventAt) {
         const diff = nowMs - new Date(card.lastEventAt).getTime();
@@ -74,65 +66,4 @@ export async function merchantStampRoutes(fastify) {
         }
       }
 
-      // 3) zjisti threshold z Customer nastavení (nebo fallback)
-      const customerDoc = await Customer.findOne({ merchantId });
-      const threshold = resolveThreshold(customerDoc);
-
-      // 4) stamp + prípadne reward issue
-      const prevStamps = Number(card.stamps || 0);
-      const nextStamps = prevStamps + 1;
-      card.stamps = nextStamps;
-
-      // každých "threshold" razítek -> +1 reward + issue redeemCode
-      const crossed =
-        Math.floor(nextStamps / threshold) - Math.floor(prevStamps / threshold);
-      let rewardDelta = 0;
-
-      if (crossed > 0) {
-        rewardDelta = crossed;
-        card.rewards = Number(card.rewards || 0) + rewardDelta;
-
-        // vydáme/rotujeme redeemCode pro reward (1 aktivní)
-        issueRedeemCode(card, {
-          code: generateRedeemCode(),
-          purpose: "reward",
-          validTo: null,
-          meta: {
-            source: "stamp",
-            threshold,
-            earned: rewardDelta,
-          },
-          rotateStrategy: "expireAndIssue",
-        });
-      }
-
-      // zaznamenáme poslední stamp event (pro rate-limit)
-      card.lastEventAt = new Date(nowMs);
-
-      await card.save();
-
-      // 5) vrat updated public payload
-      const publicPayload = await buildPublicCardPayload(card._id);
-
-      return reply.send({
-        ok: true,
-        stamped: {
-          added: 1,
-          threshold,
-          rewardDelta,
-          stamps: card.stamps,
-          rewards: card.rewards,
-        },
-        card: {
-          cardId: String(card._id),
-          customerId: card.customerId,
-          stamps: card.stamps,
-          rewards: card.rewards,
-        },
-        public: publicPayload,
-      });
-    } catch (err) {
-      return reply.code(500).send({ error: err?.message || "stamp failed" });
-    }
-  });
-}
+      // 3) zjisti threshold z Customer
