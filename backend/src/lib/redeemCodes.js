@@ -4,6 +4,11 @@ function normCode(v) {
   return typeof v === "string" ? v.trim().toUpperCase() : "";
 }
 
+// Klíc pro vyhledávání: jen A-Z0-9 (bez pomlcek, mezer, atd.)
+function codeKey(v) {
+  return normCode(v).replace(/[^A-Z0-9]/g, "");
+}
+
 export function isActiveRedeem(rc, now = new Date()) {
   if (!rc) return false;
   if (rc.status !== "active") return false;
@@ -36,29 +41,29 @@ export function expireActiveRedeem(card, purpose, now = new Date()) {
   for (const rc of card.redeemCodes) {
     if (rc?.purpose === purpose && isActiveRedeem(rc, now)) {
       rc.status = "expired";
-
-      // Pozn.: expiredAt není v tvém schema -> bud ho pridej do RedeemCodeSchema,
-      // nebo tuhle rádku nech (mongoose to uloží jen pokud schema pole obsahuje / strict=false).
-      // Pokud schema expiredAt nemá a strict je true, pole se zahodí => audit nebude.
+      // Pozn.: expiredAt musí být ve schématu, jinak se v strict režimu neuloží.
       rc.expiredAt = now;
-
       changed = true;
     }
   }
   return changed;
 }
 
-// najdi aktivní redeem podle code (v rámci jednoho card dokumentu)
+// Najdi aktivní redeem podle code (v rámci jednoho card dokumentu)
+// - porovnává se pres codeKey, aby prošel i scan bez pomlcek
 export function findActiveRedeemByCode(card, code, now = new Date()) {
-  const c = normCode(code);
-  if (!c) return null;
+  const key = codeKey(code);
+  if (!key) return null;
   if (!Array.isArray(card.redeemCodes)) return null;
 
   return (
     card.redeemCodes.find((rc) => {
       if (!rc) return false;
       if (rc.status !== "active") return false;
-      if (normCode(rc.code) !== c) return false;
+
+      const rcKey = rc.codeKey ? String(rc.codeKey) : codeKey(rc.code);
+      if (rcKey !== key) return false;
+
       if (rc.validTo && new Date(rc.validTo) <= now) return false;
       return true;
     }) || null
@@ -88,21 +93,28 @@ export function issueRedeemCode(
 
   if (!Array.isArray(card.redeemCodes)) card.redeemCodes = [];
 
-  const normalized = normCode(code);
-  if (!normalized) {
+  const normalizedDisplay = normCode(code);
+  const key = codeKey(code);
+
+  if (!normalizedDisplay || !key) {
     const err = new Error("Invalid redeem code");
     err.code = "INVALID_REDEEM_CODE";
     throw err;
   }
 
   card.redeemCodes.push({
-    code: normalized, // ? vždy ukládáme normalizovane
+    // code = pro display (muže obsahovat pomlcky)
+    code: normalizedDisplay,
+    // codeKey = pro vyhledávání (bez pomlcek)
+    codeKey: key,
+
     purpose,
     status: "active",
     validTo,
     meta,
     createdAt: now,
     redeemedAt: null,
+    expiredAt: null,
   });
 
   return card;
@@ -110,12 +122,11 @@ export function issueRedeemCode(
 
 /**
  * Merchant scan helper:
- * - najde kartu podle merchantId + redeemCodes.code
+ * - najde kartu podle merchantId + redeemCodes.codeKey (primárne)
+ * - fallback pro stará data: redeemCodes.code
  * - validuje active + validTo
  * - provede redeem podle redeemCode.purpose (reward/coupon)
  * - zapíše CardEvent
- *
- * Pozn.: Je to "DB helper" (delá query), takže sem posíláme Card a CardEvent z routy.
  */
 export async function redeemByCodeForMerchant({
   Card,
@@ -125,19 +136,28 @@ export async function redeemByCodeForMerchant({
   source = "merchant-scan",
   actorId = merchantId,
 }) {
-  const codeNorm = normCode(code);
-  if (!codeNorm) {
+  const input = normCode(code);
+  const key = codeKey(code);
+
+  if (!input || !key) {
     return { ok: false, status: 400, error: "code is required" };
   }
 
   const now = new Date();
 
-  // Najdi kartu, která obsahuje daný kód
-  // ? Query musí používat normalizovaný kód, protože tak ho ukládáme
-  const card = await Card.findOne({
+  // 1) Najdi kartu (nejdrív pres codeKey, to je robustní vuci pomlckám)
+  let card = await Card.findOne({
     merchantId,
-    "redeemCodes.code": codeNorm,
+    "redeemCodes.codeKey": key,
   });
+
+  // 2) Fallback pro historická data, kde codeKey ješte není uložené
+  if (!card) {
+    card = await Card.findOne({
+      merchantId,
+      "redeemCodes.code": input,
+    });
+  }
 
   if (!card) {
     return { ok: false, status: 404, error: "Code not found" };
@@ -147,11 +167,14 @@ export async function redeemByCodeForMerchant({
     return { ok: false, status: 400, error: "No redeem codes available" };
   }
 
+  // Najdi konkrétní redeem záznam v tom card dokumentu
   const idx = card.redeemCodes.findIndex((x) => {
     if (!x) return false;
-    if (typeof x.code !== "string") return false;
-    if (normCode(x.code) !== codeNorm) return false;
     if (x.status !== "active") return false;
+
+    const xKey = x.codeKey ? String(x.codeKey) : codeKey(x.code);
+    if (xKey !== key) return false;
+
     if (x.validTo && new Date(x.validTo) <= now) return false;
     return true;
   });
@@ -178,6 +201,7 @@ export async function redeemByCodeForMerchant({
   if (purpose === "reward") {
     const currentRewards = card.rewards || 0;
     if (currentRewards < 1) {
+      // Neuložíme zmeny (stav redeemed) — at to nezamkne kód omylem
       return { ok: false, status: 400, error: "No rewards available" };
     }
 
@@ -193,15 +217,11 @@ export async function redeemByCodeForMerchant({
       deltaRewards: -1,
       cardType: card.type ?? "stamps",
       templateId: card.templateId ?? null,
-      actor: {
-        type: "merchant",
-        actorId,
-        source,
-      },
-      payload: { code: codeNorm, purpose: "reward" },
+      actor: { type: "merchant", actorId, source },
+      payload: { code: input, codeKey: key, purpose: "reward" },
     });
 
-    return { ok: true, status: 200, card, purpose: "reward", code: codeNorm };
+    return { ok: true, status: 200, card, purpose: "reward", code: input };
   }
 
   // ------------------------------------------------------------
@@ -219,15 +239,11 @@ export async function redeemByCodeForMerchant({
       deltaRewards: 0,
       cardType: card.type ?? "coupon",
       templateId: card.templateId ?? null,
-      actor: {
-        type: "merchant",
-        actorId,
-        source,
-      },
-      payload: { code: codeNorm, purpose: "coupon", meta: redeem.meta ?? null },
+      actor: { type: "merchant", actorId, source },
+      payload: { code: input, codeKey: key, purpose: "coupon", meta: redeem.meta ?? null },
     });
 
-    return { ok: true, status: 200, card, purpose: "coupon", code: codeNorm };
+    return { ok: true, status: 200, card, purpose: "coupon", code: input };
   }
 
   return {
@@ -235,6 +251,6 @@ export async function redeemByCodeForMerchant({
     status: 409,
     error: "Redeem purpose not supported",
     purpose,
-    code: codeNorm,
+    code: input,
   };
 }

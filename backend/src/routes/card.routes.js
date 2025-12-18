@@ -242,96 +242,145 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
     }
   });
 
-  /**
-   * POST /api/cards/:id/stamp
-   * Přidá razítko (default +1, nebo podle body.amount)
-   * ✅ Pravidla bere z AKTUÁLNÍ CardTemplate (globálně pro merchanta)
-   * ✅ Funguje pouze pokud je aktivní program cardType === "stamps"
-   * ✅ Při REWARD_EARNED vygeneruje redeemCode do card.redeemCodes
-   * ������ Pouze pro přihlášeného merchanta a jen na jeho kartě.
-   */
-  fastify.post("/api/cards/:id/stamp", async (request, reply) => {
-    try {
-      const { isAuthenticated, userId } = getAuth(request);
+/**
+ * POST /api/cards/:id/stamp
+ * Přidá razítko (default +1, nebo podle body.amount)
+ * ✅ Pravidla bere z AKTUÁLNÍ CardTemplate (globálně pro merchanta)
+ * ✅ Funguje pouze pokud je aktivní program cardType === "stamps"
+ * ✅ Při REWARD_EARNED vygeneruje redeemCode do card.redeemCodes
+ * ������ Pouze pro přihlášeného merchanta a jen na jeho kartě.
+ */
+fastify.post("/api/cards/:id/stamp", async (request, reply) => {
+  try {
+    const { isAuthenticated, userId } = getAuth(request);
 
-      if (!isAuthenticated || !userId) {
-        return reply.code(401).send({ error: "Missing or invalid token" });
-      }
+    if (!isAuthenticated || !userId) {
+      return reply.code(401).send({ error: "Missing or invalid token" });
+    }
 
-      const { id } = request.params;
-      const merchantId = userId;
+    const { id } = request.params;
+    const merchantId = userId;
 
-      // amount: jen integer + rozumný rozsah
-      const amountRaw = request.body?.amount;
-      const amount = Number.isInteger(amountRaw) ? amountRaw : 1;
+    // amount: jen integer + rozumný rozsah
+    const amountRaw = request.body?.amount;
+    const amount = Number.isInteger(amountRaw) ? amountRaw : 1;
 
-      if (amount < 1 || amount > 5) {
-        return reply.code(400).send({ error: "amount must be integer 1..5" });
-      }
+    if (amount < 1 || amount > 5) {
+      return reply.code(400).send({ error: "amount must be integer 1..5" });
+    }
 
-      const card = await Card.findOne({ _id: id, merchantId });
-      if (!card) {
-        return reply.code(404).send({ error: "Card not found" });
-      }
+    const card = await Card.findOne({ _id: id, merchantId });
+    if (!card) {
+      return reply.code(404).send({ error: "Card not found" });
+    }
 
-      // globální template pro merchanta
-      const template = await CardTemplate.findOne({ merchantId }).lean();
-      const activeCardType = template?.cardType ?? "stamps";
-
-      if (activeCardType !== "stamps") {
-        return reply.code(409).send({
-          error: "Active program is not stamps",
-          cardType: activeCardType,
+    // (VOLITELNÉ) anti double-scan guard
+    // Pokud chceš vypnout, smaž tento blok.
+    const now = new Date();
+    const COOLDOWN_MS = 1200; // 1.2s, aby scan čtečky neudělaly dvojklik
+    if (card.lastEventAt) {
+      const diff = Date.now() - new Date(card.lastEventAt).getTime();
+      if (diff >= 0 && diff < COOLDOWN_MS) {
+        return reply.code(429).send({
+          error: "stamp throttled",
+          retryAfterMs: COOLDOWN_MS - diff,
         });
       }
+    }
 
-      // threshold z template rules (fallback pro starší data)
-      const thresholdRaw =
-        template?.rules?.freeStampsToReward ?? template?.freeStampsToReward ?? 10;
-      const threshold =
-        Number.isInteger(thresholdRaw) && thresholdRaw > 0 ? thresholdRaw : 10;
+    // globální template pro merchanta
+    const template = await CardTemplate.findOne({ merchantId }).lean();
+    const activeCardType = template?.cardType ?? "stamps";
 
-      let newStamps = (card.stamps || 0) + amount;
-      let newRewards = card.rewards || 0;
+    if (activeCardType !== "stamps") {
+      return reply.code(409).send({
+        error: "Active program is not stamps",
+        cardType: activeCardType,
+      });
+    }
 
-      while (newStamps >= threshold) {
-        newRewards += 1;
-        newStamps -= threshold;
-      }
+    // threshold z template rules (fallback pro starší data)
+    const thresholdRaw =
+      template?.rules?.freeStampsToReward ??
+      template?.freeStampsToReward ??
+      10;
 
-      const prevRewards = card.rewards || 0;
-      const rewardDelta = newRewards - prevRewards;
+    const thresholdNum = Number(thresholdRaw);
+    const threshold =
+      Number.isFinite(thresholdNum) && thresholdNum > 0
+        ? Math.floor(thresholdNum)
+        : 10;
 
-      card.stamps = newStamps;
-      card.rewards = newRewards;
-      card.lastEventAt = new Date();
+    const prevStamps = Number(card.stamps || 0);
+    const prevRewards = Number(card.rewards || 0);
 
-      // ✅ Při získání alespoň jedné odměny vystav (nebo obnov) reward redeem kód.
-      // Pozn.: držíme max 1 aktivní reward kód (PassKit-friendly: jeden barcode).
-      if (rewardDelta > 0) {
-        issueRedeemCode(card, {
-          code: generateRedeemCode(),
-          purpose: "reward",
-          validTo: null,
-          meta: {
-            source: "stamp",
-            threshold,
-            earned: rewardDelta,
-          },
-          rotateStrategy: "expireAndIssue",
-        });
-      }
+    // ------------------------------------------------------------
+    // LOGIKA: stamps držíme jako "progress do další odměny"
+    // -> po dosažení threshold se odečte threshold a přidá reward
+    // ------------------------------------------------------------
+    let newStamps = prevStamps + amount;
+    let newRewards = prevRewards;
 
-      await card.save();
+    while (newStamps >= threshold) {
+      newRewards += 1;
+      newStamps -= threshold;
+    }
 
-      // event: přidání razítka
+    const rewardDelta = newRewards - prevRewards;
+
+    card.stamps = newStamps;
+    card.rewards = newRewards;
+    card.lastEventAt = now;
+
+    // ✅ při získání alespoň jedné odměny vystav (nebo obnov) 1 aktivní reward redeem
+    if (rewardDelta > 0) {
+      issueRedeemCode(card, {
+        code: generateRedeemCode(),
+        purpose: "reward",
+        validTo: null,
+        meta: {
+          source: "stamp",
+          threshold,
+          earned: rewardDelta, // kolik odměn přibylo
+        },
+        rotateStrategy: "expireAndIssue",
+      });
+    }
+
+    await card.save();
+
+    // ------------------------------------------------------------
+    // EVENTY
+    // ------------------------------------------------------------
+    await CardEvent.create({
+      merchantId,
+      cardId: card._id,
+      walletToken: card.walletToken,
+      type: "STAMP_ADDED",
+      deltaStamps: amount,
+      deltaRewards: 0,
+      cardType: activeCardType,
+      templateId: card.templateId ?? null,
+      actor: {
+        type: "merchant",
+        actorId: merchantId,
+        source: "merchant-app",
+      },
+      payload: {
+        threshold,
+        prevStamps,
+        newStamps,
+      },
+    });
+
+    if (rewardDelta > 0) {
       await CardEvent.create({
         merchantId,
         cardId: card._id,
         walletToken: card.walletToken,
-        type: "STAMP_ADDED",
-        deltaStamps: amount,
-        deltaRewards: 0,
+        type: "REWARD_EARNED",
+        deltaStamps: 0,
+        deltaRewards: rewardDelta,
         cardType: activeCardType,
         templateId: card.templateId ?? null,
         actor: {
@@ -341,39 +390,22 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
         },
         payload: {
           threshold,
+          rewardDelta,
+          redeemCodesIssued: 1, // 1 aktivní redeem (PassKit-friendly)
         },
       });
-
-      // event: odměna získána
-      if (rewardDelta > 0) {
-        await CardEvent.create({
-          merchantId,
-          cardId: card._id,
-          walletToken: card.walletToken,
-          type: "REWARD_EARNED",
-          deltaStamps: 0,
-          deltaRewards: rewardDelta,
-          cardType: activeCardType,
-          templateId: card.templateId ?? null,
-          actor: {
-            type: "merchant",
-            actorId: merchantId,
-            source: "merchant-app",
-          },
-          payload: {
-            threshold,
-            redeemCodesIssued: 1, // vystavujeme jeden aktivní reward kód (ne rewardDelta kusů)
-            rewardDelta,
-          },
-        });
-      }
-
-      return reply.send(card);
-    } catch (err) {
-      request.log.error(err, "Error adding stamp");
-      return reply.code(500).send({ error: "Error adding stamp" });
     }
-  });
+
+    // (VOLITELNÉ) když chceš rovnou vrátit i public payload:
+    // const publicPayload = await buildPublicCardPayload(String(card._id));
+    // return reply.send({ ok: true, card, public: publicPayload });
+
+    return reply.send(card);
+  } catch (err) {
+    request.log.error(err, "Error adding stamp");
+    return reply.code(500).send({ error: "Error adding stamp" });
+  }
+});
 
 
   /**
