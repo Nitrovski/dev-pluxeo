@@ -1,3 +1,10 @@
+import { getAuth } from "@clerk/fastify";
+import { Card } from "../models/card.model.js";
+import { CardEvent } from "../models/cardEvent.model.js";
+import { redeemByCodeForMerchant } from "../lib/redeemCodes.js";
+import { buildPublicCardPayload } from "../lib/publicPayload.js";
+
+
 export async function merchantScanRoutes(fastify) {
   fastify.post("/api/merchant/scan", async (request, reply) => {
     try {
