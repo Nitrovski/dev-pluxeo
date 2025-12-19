@@ -18,6 +18,7 @@ const CardEventSchema = new Schema(
         "STAMP_ADDED",
         "REWARD_REDEEMED",
         "COUPON_REDEEMED",
+        "REDEEM_FAILED",
         "CARD_UPDATED",
       ],
       index: true,
