@@ -92,8 +92,8 @@ export async function merchantScanRoutes(fastify) {
         public: publicPayload,
       });
     } catch (err) {
-      request.log.error(err, "merchant scan failed");
-      return reply.code(500).send({ error: "scan failed" });
-    }
+      request.log.error({ err, stack: err?.stack }, "merchant scan failed");
+  return reply.code(500).send({ error: err?.message || "scan failed" });
+}
   });
 }

@@ -4,7 +4,13 @@ export async function buildPublicCardPayload(cardId) {
   const card = await Card.findById(cardId).lean();
   if (!card) return null;
 
-  const active = (card.redeemCodes || []).filter((x) => x.status === "active");
+  const redeemCodes = Array.isArray(card.redeemCodes)
+    ? card.redeemCodes.filter(Boolean)
+    : [];
+
+  const active = redeemCodes.filter(
+    (x) => x && x.status === "active"
+  );
 
   const pick =
     active.find((x) => x.purpose === "reward") ||
@@ -13,11 +19,17 @@ export async function buildPublicCardPayload(cardId) {
 
   return {
     cardId: String(card._id),
-    customerId: card.customerId,
-    stamps: card.stamps,
-    rewards: card.rewards,
+    customerId: card.customerId ?? null,
+    stamps: Number(card.stamps || 0),
+    rewards: Number(card.rewards || 0),
+
     redeemCode: pick
-      ? { code: pick.code, purpose: pick.purpose, validTo: pick.validTo ?? null }
+      ? {
+          code: String(pick.code || ""),
+          purpose: pick.purpose || "reward",
+          validTo: pick.validTo ? new Date(pick.validTo).toISOString() : null,
+          meta: pick.meta ?? null,
+        }
       : null,
   };
 }
