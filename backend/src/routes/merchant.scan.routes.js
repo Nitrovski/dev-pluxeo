@@ -1,8 +1,10 @@
 import { getAuth } from "@clerk/fastify";
 import { Card } from "../models/card.model.js";
 import { CardEvent } from "../models/cardEvent.model.js";
+import { ScanEvent } from "../models/scanEvent.model.js";
 import { redeemByCodeForMerchant } from "../lib/redeemCodes.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
+import { ScanFailureReasons } from "../constants/scanFailureReasons.js";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
@@ -37,35 +39,73 @@ function findRedeemedAtFromCard(card, codeUpperOrNorm) {
   return dt && !Number.isNaN(dt.getTime()) ? dt.toISOString() : null;
 }
 
+async function recordScanEvent(
+  request,
+  { merchantId = null, cardId = null, code = null, status, reason = null, payload = {} }
+) {
+  try {
+    await ScanEvent.create({
+      merchantId,
+      cardId,
+      code,
+      status,
+      reason,
+      payload: { ...payload, reason },
+    });
+  } catch (err) {
+    request?.log?.error?.({ err, status, reason }, "scan event persist failed");
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /* Route                                                              */
 /* ------------------------------------------------------------------ */
 
 export async function merchantScanRoutes(fastify) {
   fastify.post("/api/merchant/scan", async (request, reply) => {
+    let merchantId = null;
+    let lastCardId = null;
+    const raw = request.body?.code;
+
+    const respondWithFailure = async (status, reason, body = {}) => {
+      await recordScanEvent(request, {
+        merchantId,
+        cardId: lastCardId,
+        code: raw,
+        status: "failure",
+        reason,
+        payload: { status, ...body },
+      });
+
+      return reply.code(status).send(body);
+    };
+
     try {
       const { isAuthenticated, userId } = getAuth(request);
       if (!isAuthenticated || !userId) {
-        return reply.code(401).send({ error: "Missing or invalid token" });
+        return respondWithFailure(401, ScanFailureReasons.AUTHENTICATION, {
+          error: "Missing or invalid token",
+        });
       }
 
-      const merchantId = userId;
+      merchantId = userId;
 
-      const raw = request.body?.code;
       const code = normCode(raw);
       const codeAlt = normCodeAlnum(raw);
 
       if (!code) {
-        return reply.code(400).send({ error: "code is required" });
+        return respondWithFailure(400, ScanFailureReasons.CODE_MISSING, {
+          error: "code is required",
+        });
       }
 
-      // kandidáti pro match (ruzné QR formáty)
+      // kandidÃ¡ti pro match (ruznÃ© QR formÃ¡ty)
       const codeCandidates = Array.from(
         new Set([code, codeAlt].filter(Boolean))
       );
 
       /* ------------------------------------------------------------ */
-      /* Pre-check cooldown (rychlá pojistka)                          */
+      /* Pre-check cooldown (rychlÃ¡ pojistka)                          */
       /* ------------------------------------------------------------ */
       const preCard = await Card.findOne(
         { merchantId, "redeemCodes.code": { $in: codeCandidates } },
@@ -73,9 +113,10 @@ export async function merchantScanRoutes(fastify) {
       );
 
       if (preCard?.lastEventAt) {
+        lastCardId = preCard._id;
         const diff = Date.now() - new Date(preCard.lastEventAt).getTime();
         if (diff >= 0 && diff < REDEEM_COOLDOWN_MS) {
-          return reply.code(429).send({
+          return respondWithFailure(429, ScanFailureReasons.RATE_LIMITED, {
             error: "redeem throttled",
             retryAfterMs: REDEEM_COOLDOWN_MS - diff,
           });
@@ -105,12 +146,16 @@ export async function merchantScanRoutes(fastify) {
       }
 
       if (!res || res.ok !== true || !res.card) {
-        return reply
-          .code(res?.status || 400)
-          .send({ error: res?.error || "redeem failed" });
+        if (res?.card?._id) lastCardId = res.card._id;
+
+        const status = res?.status || 400;
+        return respondWithFailure(status, res?.reason || ScanFailureReasons.REDEEM_FAILED, {
+          error: res?.error || "redeem failed",
+        });
       }
 
       const updatedCard = res.card;
+      lastCardId = updatedCard._id;
 
       /* ------------------------------------------------------------ */
       /* Public payload (wallet view)                                 */
@@ -120,11 +165,23 @@ export async function merchantScanRoutes(fastify) {
       );
 
       /* ------------------------------------------------------------ */
-      /* redeemedAt – ideálne z DB                                    */
+      /* redeemedAt Â– ideÃ¡lne z DB                                    */
       /* ------------------------------------------------------------ */
       const redeemedAt =
         findRedeemedAtFromCard(updatedCard, res.code || usedCode) ||
         new Date().toISOString();
+
+      await recordScanEvent(request, {
+        merchantId,
+        cardId: lastCardId,
+        code: res.code || usedCode,
+        status: "success",
+        payload: {
+          purpose: res.purpose,
+          redeemedAt,
+          cardType: updatedCard.type ?? "stamps",
+        },
+      });
 
       /* ------------------------------------------------------------ */
       /* Response                                                     */
@@ -149,6 +206,15 @@ export async function merchantScanRoutes(fastify) {
         public: publicPayload,
       });
     } catch (err) {
+      await recordScanEvent(request, {
+        merchantId,
+        cardId: lastCardId,
+        code: raw,
+        status: "failure",
+        reason: ScanFailureReasons.INTERNAL_ERROR,
+        payload: { error: err?.message || "scan failed" },
+      });
+
       request.log.error(
         { err, stack: err?.stack },
         "merchant scan failed"

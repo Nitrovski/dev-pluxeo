@@ -1,10 +1,11 @@
 // src/lib/redeemCodes.js
+import { ScanFailureReasons } from "../constants/scanFailureReasons.js";
 
 function normCode(v) {
   return typeof v === "string" ? v.trim().toUpperCase() : "";
 }
 
-// Klíc pro vyhledávání: jen A-Z0-9 (bez pomlcek, mezer, atd.)
+// KlÃ­c pro vyhledÃ¡vÃ¡nÃ­: jen A-Z0-9 (bez pomlcek, mezer, atd.)
 function codeKey(v) {
   return normCode(v).replace(/[^A-Z0-9]/g, "");
 }
@@ -25,7 +26,7 @@ export function getActiveRedeemByPurpose(card, purpose, now = new Date()) {
   );
 }
 
-// Priorita pro zobrazení v pass.barcode (PassKit obvykle jen jeden)
+// Priorita pro zobrazenÃ­ v pass.barcode (PassKit obvykle jen jeden)
 export function pickRedeemForDisplay(card, now = new Date()) {
   return (
     getActiveRedeemByPurpose(card, "reward", now) ||
@@ -41,7 +42,7 @@ export function expireActiveRedeem(card, purpose, now = new Date()) {
   for (const rc of card.redeemCodes) {
     if (rc?.purpose === purpose && isActiveRedeem(rc, now)) {
       rc.status = "expired";
-      // Pozn.: expiredAt musí být ve schématu, jinak se v strict režimu neuloží.
+      // Pozn.: expiredAt musÃ­ bÃ½t ve schÃ©matu, jinak se v strict reÂžimu neuloÂžÃ­.
       rc.expiredAt = now;
       changed = true;
     }
@@ -49,8 +50,8 @@ export function expireActiveRedeem(card, purpose, now = new Date()) {
   return changed;
 }
 
-// Najdi aktivní redeem podle code (v rámci jednoho card dokumentu)
-// - porovnává se pres codeKey, aby prošel i scan bez pomlcek
+// Najdi aktivnÃ­ redeem podle code (v rÃ¡mci jednoho card dokumentu)
+// - porovnÃ¡vÃ¡ se pres codeKey, aby proÂšel i scan bez pomlcek
 export function findActiveRedeemByCode(card, code, now = new Date()) {
   const key = codeKey(code);
   if (!key) return null;
@@ -72,8 +73,8 @@ export function findActiveRedeemByCode(card, code, now = new Date()) {
 
 /**
  * rotateStrategy:
- * - "reject" -> když existuje active, vrátí error
- * - "expireAndIssue" -> aktivní expirovat a vydat nový
+ * - "reject" -> kdyÂž existuje active, vrÃ¡tÃ­ error
+ * - "expireAndIssue" -> aktivnÃ­ expirovat a vydat novÃ½
  */
 export function issueRedeemCode(
   card,
@@ -103,9 +104,9 @@ export function issueRedeemCode(
   }
 
   card.redeemCodes.push({
-    // code = pro display (muže obsahovat pomlcky)
+    // code = pro display (muÂže obsahovat pomlcky)
     code: normalizedDisplay,
-    // codeKey = pro vyhledávání (bez pomlcek)
+    // codeKey = pro vyhledÃ¡vÃ¡nÃ­ (bez pomlcek)
     codeKey: key,
 
     purpose,
@@ -122,11 +123,11 @@ export function issueRedeemCode(
 
 /**
  * Merchant scan helper:
- * - najde kartu podle merchantId + redeemCodes.codeKey (primárne)
- * - fallback pro stará data: redeemCodes.code (vcetne alnum varianty)
+ * - najde kartu podle merchantId + redeemCodes.codeKey (primÃ¡rne)
+ * - fallback pro starÃ¡ data: redeemCodes.code (vcetne alnum varianty)
  * - validuje active + validTo
  * - provede redeem podle redeemCode.purpose (reward/coupon)
- * - zapíše CardEvent
+ * - zapÃ­Âše CardEvent
  */
 export async function redeemByCodeForMerchant({
   Card,
@@ -141,19 +142,24 @@ export async function redeemByCodeForMerchant({
   const input = raw.trim().toUpperCase();
   const inputAlnum = input.replace(/[^A-Z0-9]/g, "");
 
-  // safe codeKey() – pokud tvoje codeKey() nekdy throwne, tak to chytíme
+  // safe codeKey() Â– pokud tvoje codeKey() nekdy throwne, tak to chytÃ­me
   let key = null;
   try {
-    // pokud máš codeKey helper, použij ho
+    // pokud mÃ¡Âš codeKey helper, pouÂžij ho
     key = codeKey(raw);
   } catch (e) {
     key = null;
   }
-  // fallback: alnum forma je pro lookup prakticky “codeKey”
+  // fallback: alnum forma je pro lookup prakticky Â“codeKeyÂ”
   if (!key) key = inputAlnum;
 
   if (!input || !key) {
-    return { ok: false, status: 400, error: "code is required" };
+    return {
+      ok: false,
+      status: 400,
+      error: "code is required",
+      reason: ScanFailureReasons.CODE_MISSING,
+    };
   }
 
   const now = new Date();
@@ -169,12 +175,22 @@ export async function redeemByCodeForMerchant({
   const card = await Card.findOne(matchLookup);
 
   if (!card) {
-    return { ok: false, status: 404, error: "Code not found" };
+    return {
+      ok: false,
+      status: 404,
+      error: "Code not found",
+      reason: ScanFailureReasons.CODE_NOT_FOUND,
+    };
   }
 
   const list = Array.isArray(card.redeemCodes) ? card.redeemCodes : [];
   if (list.length === 0) {
-    return { ok: false, status: 400, error: "No redeem codes available" };
+    return {
+      ok: false,
+      status: 400,
+      error: "No redeem codes available",
+      reason: ScanFailureReasons.NO_REDEEM_CODES,
+    };
   }
 
   const redeemIndex = list.findIndex((x) => {
@@ -188,13 +204,19 @@ export async function redeemByCodeForMerchant({
   });
 
   if (redeemIndex === -1) {
-    return { ok: false, status: 404, error: "Code not found" };
+    return {
+      ok: false,
+      status: 404,
+      error: "Code not found",
+      reason: ScanFailureReasons.CODE_NOT_FOUND,
+    };
   }
 
   const redeem = list[redeemIndex];
   const purpose = redeem?.purpose || "reward"; // backward compatible
 
   const logFailure = async (reason, status, error) => {
+    const failureReason = reason || ScanFailureReasons.REDEEM_FAILED;
     await CardEvent.create({
       merchantId,
       cardId: card._id,
@@ -209,15 +231,19 @@ export async function redeemByCodeForMerchant({
         code: input,
         codeKey: key,
         purpose,
-        reason,
+        reason: failureReason,
       },
     });
 
-    return { ok: false, status, error };
+    return { ok: false, status, error, reason: failureReason };
   };
 
   if (redeem.status !== "active") {
-    return logFailure("inactive_code", 400, "Invalid, expired, or already redeemed code");
+    return logFailure(
+      ScanFailureReasons.INACTIVE_CODE,
+      400,
+      "Invalid, expired, or already redeemed code"
+    );
   }
 
   if (redeem.validTo) {
@@ -257,12 +283,12 @@ export async function redeemByCodeForMerchant({
         }
       );
 
-      return logFailure("expired", 410, "Code expired");
+      return logFailure(ScanFailureReasons.EXPIRED, 410, "Code expired");
     }
   }
 
   if (purpose === "reward" && Number(card.rewards || 0) < 1) {
-    return logFailure("no_rewards", 400, "No rewards available");
+    return logFailure(ScanFailureReasons.NO_REWARDS, 400, "No rewards available");
   }
 
   const validDateFilter = [
@@ -311,7 +337,11 @@ export async function redeemByCodeForMerchant({
   });
 
   if (!updatedCard) {
-    return logFailure("concurrent_or_inactive", 400, "Invalid, expired, or already redeemed code");
+    return logFailure(
+      ScanFailureReasons.CONCURRENT_OR_INACTIVE,
+      400,
+      "Invalid, expired, or already redeemed code"
+    );
   }
 
   if (purpose === "reward") {
@@ -367,5 +397,9 @@ export async function redeemByCodeForMerchant({
     };
   }
 
-  return logFailure("unsupported_purpose", 409, "Redeem purpose not supported");
+  return logFailure(
+    ScanFailureReasons.UNSUPPORTED_PURPOSE,
+    409,
+    "Redeem purpose not supported"
+  );
 }
