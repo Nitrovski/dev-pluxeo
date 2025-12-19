@@ -368,4 +368,5 @@ export async function redeemByCodeForMerchant({
   }
 
   return logFailure("unsupported_purpose", 409, "Redeem purpose not supported");
+
 }
