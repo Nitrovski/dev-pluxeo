@@ -123,7 +123,7 @@ export function issueRedeemCode(
 /**
  * Merchant scan helper:
  * - najde kartu podle merchantId + redeemCodes.codeKey (primárne)
- * - fallback pro stará data: redeemCodes.code
+ * - fallback pro stará data: redeemCodes.code (vcetne alnum varianty)
  * - validuje active + validTo
  * - provede redeem podle redeemCode.purpose (reward/coupon)
  * - zapíše CardEvent
@@ -136,8 +136,21 @@ export async function redeemByCodeForMerchant({
   source = "merchant-scan",
   actorId = merchantId,
 }) {
-  const input = normCode(code);
-  const key = codeKey(code);
+  // --- safe normalizace (aby nikdy nepadla 500) ---
+  const raw = String(code || "");
+  const input = raw.trim().toUpperCase();
+  const inputAlnum = input.replace(/[^A-Z0-9]/g, "");
+
+  // safe codeKey() – pokud tvoje codeKey() nekdy throwne, tak to chytíme
+  let key = null;
+  try {
+    // pokud máš codeKey helper, použij ho
+    key = codeKey(raw);
+  } catch (e) {
+    key = null;
+  }
+  // fallback: alnum forma je pro lookup prakticky “codeKey”
+  if (!key) key = inputAlnum;
 
   if (!input || !key) {
     return { ok: false, status: 400, error: "code is required" };
@@ -145,17 +158,17 @@ export async function redeemByCodeForMerchant({
 
   const now = new Date();
 
-  // 1) Najdi kartu (nejdrív pres codeKey, to je robustní vuci pomlckám)
+  // 1) Najdi kartu primárne pres codeKey
   let card = await Card.findOne({
     merchantId,
     "redeemCodes.codeKey": key,
   });
 
-  // 2) Fallback pro historická data, kde codeKey ješte není uložené
+  // 2) Fallback pro historická data: redeemCodes.code (presný i alnum)
   if (!card) {
     card = await Card.findOne({
       merchantId,
-      "redeemCodes.code": input,
+      "redeemCodes.code": { $in: [input, inputAlnum] },
     });
   }
 
@@ -163,19 +176,29 @@ export async function redeemByCodeForMerchant({
     return { ok: false, status: 404, error: "Code not found" };
   }
 
-  if (!Array.isArray(card.redeemCodes) || card.redeemCodes.length === 0) {
+  const list = Array.isArray(card.redeemCodes) ? card.redeemCodes : [];
+  if (list.length === 0) {
     return { ok: false, status: 400, error: "No redeem codes available" };
   }
 
-  // Najdi konkrétní redeem záznam v tom card dokumentu
-  const idx = card.redeemCodes.findIndex((x) => {
+  // Najdi konkrétní redeem záznam
+  const idx = list.findIndex((x) => {
     if (!x) return false;
     if (x.status !== "active") return false;
 
-    const xKey = x.codeKey ? String(x.codeKey) : codeKey(x.code);
+    const xCode = typeof x.code === "string" ? x.code.trim().toUpperCase() : "";
+    const xCodeAlnum = xCode.replace(/[^A-Z0-9]/g, "");
+
+    // preferuj uložený codeKey, jinak fallback na alnum z code
+    const xKey = x.codeKey ? String(x.codeKey) : xCodeAlnum;
+
     if (xKey !== key) return false;
 
-    if (x.validTo && new Date(x.validTo) <= now) return false;
+    if (x.validTo) {
+      const vt = new Date(x.validTo);
+      if (!Number.isNaN(vt.getTime()) && vt <= now) return false;
+    }
+
     return true;
   });
 
@@ -187,25 +210,25 @@ export async function redeemByCodeForMerchant({
     };
   }
 
-  const redeem = card.redeemCodes[idx];
+  const redeem = list[idx];
   const purpose = redeem.purpose || "reward"; // backward compatible
 
-  // spolecné: oznacit kód jako redeemed
-  card.redeemCodes[idx].status = "redeemed";
-  card.redeemCodes[idx].redeemedAt = now;
-  card.lastEventAt = now;
-
   // ------------------------------------------------------------
-  // REWARD
+  // REWARD: nejdrív over rewards, až pak oznac redeem jako redeemed
   // ------------------------------------------------------------
   if (purpose === "reward") {
-    const currentRewards = card.rewards || 0;
+    const currentRewards = Number(card.rewards || 0);
     if (currentRewards < 1) {
-      // Neuložíme zmeny (stav redeemed) — at to nezamkne kód omylem
       return { ok: false, status: 400, error: "No rewards available" };
     }
 
+    // oznac kód redeemed + odecti reward
+    card.redeemCodes[idx].status = "redeemed";
+    card.redeemCodes[idx].redeemedAt = now;
+    card.lastEventAt = now;
+
     card.rewards = currentRewards - 1;
+
     await card.save();
 
     await CardEvent.create({
@@ -221,13 +244,25 @@ export async function redeemByCodeForMerchant({
       payload: { code: input, codeKey: key, purpose: "reward" },
     });
 
-    return { ok: true, status: 200, card, purpose: "reward", code: input };
+    return {
+      ok: true,
+      status: 200,
+      card,
+      purpose: "reward",
+      code: input,
+      meta: null,
+    };
   }
 
   // ------------------------------------------------------------
   // COUPON
   // ------------------------------------------------------------
   if (purpose === "coupon") {
+    // oznac kód redeemed
+    card.redeemCodes[idx].status = "redeemed";
+    card.redeemCodes[idx].redeemedAt = now;
+    card.lastEventAt = now;
+
     await card.save();
 
     await CardEvent.create({
@@ -240,10 +275,22 @@ export async function redeemByCodeForMerchant({
       cardType: card.type ?? "coupon",
       templateId: card.templateId ?? null,
       actor: { type: "merchant", actorId, source },
-      payload: { code: input, codeKey: key, purpose: "coupon", meta: redeem.meta ?? null },
+      payload: {
+        code: input,
+        codeKey: key,
+        purpose: "coupon",
+        meta: redeem.meta ?? null,
+      },
     });
 
-    return { ok: true, status: 200, card, purpose: "coupon", code: input };
+    return {
+      ok: true,
+      status: 200,
+      card,
+      purpose: "coupon",
+      code: input,
+      meta: redeem.meta ?? null,
+    };
   }
 
   return {
