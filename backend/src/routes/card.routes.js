@@ -5,15 +5,16 @@ import { CardTemplate } from "../models/cardTemplate.model.js";
 import { getAuth } from "@clerk/fastify";
 import crypto from "crypto";
 import { CardEvent } from "../models/cardEvent.model.js";
+import { buildCardEventPayload } from "../lib/eventSchemas.js";
 import { normalizeCardContent } from "../utils/normalizeCardContent.js";
 import { pickRedeemForDisplay, issueRedeemCode } from "../lib/redeemCodes.js";
 
 
 
 
-// ⚠️ DŮLEŽITÉ:
-// normalizeCardContent musí být dostupné (buď je v tomhle souboru níž,
-// nebo ho importuj např.:
+// IMPORTANT:
+// normalizeCardContent must stay available (either defined below or imported from a shared helper)
+// 
 // import { normalizeCardContent } from "../lib/cardContent.js";
 
 function generateRedeemCode() {
@@ -26,7 +27,7 @@ function generateRedeemCode() {
 async function cardRoutes(fastify, options) {
   /**
    * POST /api/cards
-   * Vytvoří novou kartu pro PŘIHLÁŠENÉHO merchanta
+   * VytvoÅÃ­ novou kartu pro PÅIHLÃÅ ENÃHO merchanta
    */
   fastify.post("/api/cards", async (request, reply) => {
     try {
@@ -52,24 +53,24 @@ async function cardRoutes(fastify, options) {
         lastEventAt: new Date(),
       });
 
-      await CardEvent.create({
-        merchantId,
-        cardId: card._id,
-        walletToken: card.walletToken,
-        type: "CARD_CREATED",
-        deltaStamps: 0,
-        deltaRewards: 0,
-        cardType: card.type ?? "stamps",
-        templateId: card.templateId ?? null,
-        actor: {
-          type: "merchant",
-          actorId: merchantId,
-          source: "merchant-app",
-        },
-        payload: {
-          customerId,
-        },
-      });
+      await CardEvent.create(
+        buildCardEventPayload({
+          merchantId,
+          cardId: card._id,
+          walletToken: card.walletToken,
+          type: "CARD_CREATED",
+          cardType: card.type ?? "stamps",
+          templateId: card.templateId ?? null,
+          actor: {
+            type: "merchant",
+            actorId: merchantId,
+            source: "merchant-app",
+          },
+          payload: {
+            customerId,
+          },
+        })
+      );
 
       return reply.code(201).send(card);
     } catch (err) {
@@ -92,7 +93,7 @@ async function cardRoutes(fastify, options) {
 
 /**
  * POST /api/cards/:id/redeem/issue
- * Vydá nový redeem kód (reward / coupon)
+ * VydÃ¡ novÃ½ redeem kÃ³d (reward / coupon)
  *
  * Body:
  * {
@@ -101,9 +102,10 @@ async function cardRoutes(fastify, options) {
  *   meta?: object
  * }
  *
- * ������ Pouze pro přihlášeného merchanta
- * ✅ max 1 aktivní redeem kód na purpose (starý se expiroval)
- * ❌ neuplatňuje kód (jen ho vydá)
+ * í ½í´ Pouze pro pÅihlÃ¡Å¡enÃ©ho merchanta
+ * â
+ max 1 aktivnÃ­ redeem kÃ³d na purpose (starÃ½ se expiroval)
+ * â neuplatÅuje kÃ³d (jen ho vydÃ¡)
  */
 fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
   try {
@@ -132,11 +134,11 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
     }
 
     // ------------------------------------------------------------
-    // Generuj nový redeem kód
+    // Generuj novÃ½ redeem kÃ³d
     // ------------------------------------------------------------
     const code = generateRedeemCode();
 
-    // Vydání redeem kódu (helper řeší expiraci starého)
+    // VydÃ¡nÃ­ redeem kÃ³du (helper ÅeÅ¡Ã­ expiraci starÃ©ho)
     issueRedeemCode(card, {
       code,
       purpose,
@@ -151,27 +153,27 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
     // ------------------------------------------------------------
     // Audit log
     // ------------------------------------------------------------
-    await CardEvent.create({
-      merchantId,
-      cardId: card._id,
-      walletToken: card.walletToken,
-      type: purpose === "reward" ? "REWARD_ISSUED" : "COUPON_ISSUED",
-      deltaStamps: 0,
-      deltaRewards: 0,
-      cardType: card.type ?? null,
-      templateId: card.templateId ?? null,
-      actor: {
-        type: "merchant",
-        actorId: merchantId,
-        source: "merchant-app",
-      },
-      payload: {
-        code,
-        purpose,
-        validTo,
-        meta,
-      },
-    });
+    await CardEvent.create(
+      buildCardEventPayload({
+        merchantId,
+        cardId: card._id,
+        walletToken: card.walletToken,
+        type: purpose === "reward" ? "REWARD_ISSUED" : "COUPON_ISSUED",
+        cardType: card.type ?? null,
+        templateId: card.templateId ?? null,
+        actor: {
+          type: "merchant",
+          actorId: merchantId,
+          source: "merchant-app",
+        },
+        payload: {
+          code,
+          purpose,
+          validTo,
+          meta,
+        },
+      })
+    );
 
     return reply.send({
       ok: true,
@@ -195,7 +197,7 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
 
   /**
    * GET /api/cards
-   * Vrátí všechny karty aktuálního merchanta
+   * VrÃ¡tÃ­ vÅ¡echny karty aktuÃ¡lnÃ­ho merchanta
    */
   fastify.get("/api/cards", async (request, reply) => {
     try {
@@ -217,7 +219,7 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
 
   /**
    * GET /api/cards/:id
-   * Vrátí detail karty podle ID (plná data) – jen když patří danému merchantovi
+   * VrÃ¡tÃ­ detail karty podle ID (plnÃ¡ data) â jen kdyÅ¾ patÅÃ­ danÃ©mu merchantovi
    */
   fastify.get("/api/cards/:id", async (request, reply) => {
     try {
@@ -245,14 +247,15 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
   /**
    * GET /api/cards/:id/public
    * Public data pro mobil / wallet (bez auth)
-   * - template je zdroj pravdy (globální pro merchanta)
-   * - customer.cardContent je jen override (když není prázdné)
-   * - vrací payload v1 + legacy top-level fields
+   * - template je zdroj pravdy (globÃ¡lnÃ­ pro merchanta)
+   * - customer.cardContent je jen override (kdyÅ¾ nenÃ­ prÃ¡zdnÃ©)
+   * - vracÃ­ payload v1 + legacy top-level fields
    *
-   * ✅ NOVĚ:
-   * - podporuje paralelní reward + coupon
-   * - vybírá redeem podle priority (reward → coupon)
-   * - PassKit-ready (pass.barcode je kanonický zdroj)
+   * â
+ NOVÄ:
+   * - podporuje paralelnÃ­ reward + coupon
+   * - vybÃ­rÃ¡ redeem podle priority (reward â coupon)
+   * - PassKit-ready (pass.barcode je kanonickÃ½ zdroj)
    */
   fastify.get("/api/cards/:id/public", async (request, reply) => {
     try {
@@ -332,7 +335,7 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
       const barcodeType = template?.rules?.barcodeType ?? "code128";
 
       // ------------------------------------------------------------
-      // Redeem selection (reward → coupon)
+      // Redeem selection (reward â coupon)
       // ------------------------------------------------------------
       const now = new Date();
       const activeRedeem = pickRedeemForDisplay(card, now);
@@ -365,8 +368,10 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
               messageEncoding: "iso-8859-1",
               altText:
                 redeemPurpose === "reward"
-                  ? "Odměna dostupná ✅"
-                  : "Kód k uplatnění ✅",
+                  ? "OdmÄna dostupnÃ¡ â
+"
+                  : "KÃ³d k uplatnÄnÃ­ â
+",
             }
           : null;
 
@@ -374,9 +379,11 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
         ? {
             badge:
               redeemPurpose === "reward"
-                ? "Odměna dostupná ✅"
-                : "Kupón dostupný ✅",
-            instruction: "Ukažte u pokladny",
+                ? "OdmÄna dostupnÃ¡ â
+"
+                : "KupÃ³n dostupnÃ½ â
+",
+            instruction: "UkaÅ¾te u pokladny",
           }
         : {
             badge: null,

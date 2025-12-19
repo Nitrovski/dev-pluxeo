@@ -4,6 +4,8 @@ import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
 import { issueRedeemCode } from "../lib/redeemCodes.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
+import { CardEvent } from "../models/cardEvent.model.js";
+import { buildCardEventPayload } from "../lib/eventSchemas.js";
 
 function normToken(v) {
   return String(v || "").trim();
@@ -20,7 +22,7 @@ function generateRedeemCode() {
   return `PX-${clean.slice(0, 4)}-${clean.slice(4, 8)}-${clean.slice(8, 12)}`;
 }
 
-// zkus najÌt freeStampsToReward na vÌce mÌstech (podle toho, jak to m·ö uloûenÈ)
+// zkus naj√≠t freeStampsToReward na v√≠ce m√≠stech (podle toho, jak to m√°¬ö ulo¬ûen√©)
 function resolveThreshold(customerDoc) {
   const candidates = [
     customerDoc?.cardTemplate?.freeStampsToReward,
@@ -29,7 +31,7 @@ function resolveThreshold(customerDoc) {
     customerDoc?.settings?.activeTemplate?.freeStampsToReward,
   ];
 
-  // dovolÌme i string "10"
+  // dovol√≠me i string "10"
   for (const x of candidates) {
     const n = Number(x);
     if (Number.isFinite(n) && n > 0) return Math.floor(n);
@@ -71,12 +73,12 @@ export async function merchantStampRoutes(fastify) {
         }
       }
 
-      // 3) threshold z Customer nastavenÌ (nebo fallback)
+      // 3) threshold z Customer nastaven√≠ (nebo fallback)
       const customerDoc = await Customer.findOne({ merchantId });
       const threshold = resolveThreshold(customerDoc);
 
       // 4) STAMPS = progress (0..threshold-1)
-      //    Pri dosaûenÌ threshold se odecte (reset/progress) a pricte reward.
+      //    Pri dosa¬ûen√≠ threshold se odecte (reset/progress) a pricte reward.
       const prevStamps = Number(card.stamps || 0);
       const prevRewards = Number(card.rewards || 0);
 
@@ -84,7 +86,7 @@ export async function merchantStampRoutes(fastify) {
       let newRewards = prevRewards;
 
       while (newStamps >= threshold) {
-        newStamps -= threshold; // ?? spotrebuj razÌtka pri vzniku odmeny
+        newStamps -= threshold; // ?? spotrebuj raz√≠tka pri vzniku odmeny
         newRewards += 1;
       }
 
@@ -93,7 +95,7 @@ export async function merchantStampRoutes(fastify) {
       card.stamps = newStamps;
       card.rewards = newRewards;
 
-      // Pokud vznikla alespon jedna odmena, vystav 1 aktivnÌ reward redeem code
+      // Pokud vznikla alespon jedna odmena, vystav 1 aktivn√≠ reward redeem code
       if (rewardDelta > 0) {
         issueRedeemCode(card, {
           code: generateRedeemCode(),
@@ -108,10 +110,30 @@ export async function merchantStampRoutes(fastify) {
         });
       }
 
-      // zaznamen·me poslednÌ stamp event (pro rate-limit)
+      // zaznamen√°me posledn√≠ stamp event (pro rate-limit)
       card.lastEventAt = new Date(nowMs);
 
       await card.save();
+
+      await CardEvent.create(
+        buildCardEventPayload({
+          merchantId,
+          cardId: card._id,
+          walletToken: card.walletToken,
+          type: "STAMP_ADDED",
+          deltaStamps: 1,
+          deltaRewards: rewardDelta,
+          cardType: card.type ?? "stamps",
+          templateId: card.templateId ?? null,
+          actor: { type: "merchant", actorId: merchantId, source: "merchant-app" },
+          payload: {
+            threshold,
+            rewardDelta,
+            stamps: card.stamps,
+            rewards: card.rewards,
+          },
+        })
+      );
 
       // 5) vrat updated public payload
       const publicPayload = await buildPublicCardPayload(String(card._id));
