@@ -245,15 +245,15 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
 /**
  * POST /api/cards/:id/stamp
  * Přidá razítko (default +1, nebo podle body.amount)
- * ✅ Pravidla bere z AKTUÁLNÍ CardTemplate (globálně pro merchanta)
- * ✅ Funguje pouze pokud je aktivní program cardType === "stamps"
- * ✅ Při REWARD_EARNED vygeneruje redeemCode do card.redeemCodes
- * ������ Pouze pro přihlášeného merchanta a jen na jeho kartě.
+ * - Razítka jsou "progress do další odměny"
+ * - Při dosažení threshold se:
+ *   - odečte threshold ze stamps
+ *   - zvýší rewards
+ *   - vystaví 1 aktivní reward redeemCode
  */
 fastify.post("/api/cards/:id/stamp", async (request, reply) => {
   try {
     const { isAuthenticated, userId } = getAuth(request);
-
     if (!isAuthenticated || !userId) {
       return reply.code(401).send({ error: "Missing or invalid token" });
     }
@@ -261,10 +261,9 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
     const { id } = request.params;
     const merchantId = userId;
 
-    // amount: jen integer + rozumný rozsah
+    // amount guard
     const amountRaw = request.body?.amount;
     const amount = Number.isInteger(amountRaw) ? amountRaw : 1;
-
     if (amount < 1 || amount > 5) {
       return reply.code(400).send({ error: "amount must be integer 1..5" });
     }
@@ -274,10 +273,9 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
       return reply.code(404).send({ error: "Card not found" });
     }
 
-    // (VOLITELNÉ) anti double-scan guard
-    // Pokud chceš vypnout, smaž tento blok.
+    // anti double-scan guard
     const now = new Date();
-    const COOLDOWN_MS = 1200; // 1.2s, aby scan čtečky neudělaly dvojklik
+    const COOLDOWN_MS = 1200;
     if (card.lastEventAt) {
       const diff = Date.now() - new Date(card.lastEventAt).getTime();
       if (diff >= 0 && diff < COOLDOWN_MS) {
@@ -288,10 +286,9 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
       }
     }
 
-    // globální template pro merchanta
+    // aktivní program
     const template = await CardTemplate.findOne({ merchantId }).lean();
     const activeCardType = template?.cardType ?? "stamps";
-
     if (activeCardType !== "stamps") {
       return reply.code(409).send({
         error: "Active program is not stamps",
@@ -299,7 +296,7 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
       });
     }
 
-    // threshold z template rules (fallback pro starší data)
+    // threshold
     const thresholdRaw =
       template?.rules?.freeStampsToReward ??
       template?.freeStampsToReward ??
@@ -315,15 +312,14 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
     const prevRewards = Number(card.rewards || 0);
 
     // ------------------------------------------------------------
-    // LOGIKA: stamps držíme jako "progress do další odměny"
-    // -> po dosažení threshold se odečte threshold a přidá reward
+    // CORE LOGIKA
     // ------------------------------------------------------------
     let newStamps = prevStamps + amount;
     let newRewards = prevRewards;
 
     while (newStamps >= threshold) {
+      newStamps -= threshold; // ������ spotřebuj razítka
       newRewards += 1;
-      newStamps -= threshold;
     }
 
     const rewardDelta = newRewards - prevRewards;
@@ -332,7 +328,7 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
     card.rewards = newRewards;
     card.lastEventAt = now;
 
-    // ✅ při získání alespoň jedné odměny vystav (nebo obnov) 1 aktivní reward redeem
+    // vystav 1 aktivní reward redeem
     if (rewardDelta > 0) {
       issueRedeemCode(card, {
         code: generateRedeemCode(),
@@ -341,7 +337,7 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
         meta: {
           source: "stamp",
           threshold,
-          earned: rewardDelta, // kolik odměn přibylo
+          earned: rewardDelta,
         },
         rotateStrategy: "expireAndIssue",
       });
@@ -391,16 +387,13 @@ fastify.post("/api/cards/:id/stamp", async (request, reply) => {
         payload: {
           threshold,
           rewardDelta,
-          redeemCodesIssued: 1, // 1 aktivní redeem (PassKit-friendly)
+          redeemCodesIssued: 1,
         },
       });
     }
 
-    // (VOLITELNÉ) když chceš rovnou vrátit i public payload:
-    // const publicPayload = await buildPublicCardPayload(String(card._id));
-    // return reply.send({ ok: true, card, public: publicPayload });
-
-    return reply.send(card);
+    // ������ vracíme čistý objekt (ne mongoose doc)
+    return reply.send(card.toObject());
   } catch (err) {
     request.log.error(err, "Error adding stamp");
     return reply.code(500).send({ error: "Error adding stamp" });
