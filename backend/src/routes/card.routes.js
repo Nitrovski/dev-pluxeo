@@ -368,10 +368,8 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
               messageEncoding: "iso-8859-1",
               altText:
                 redeemPurpose === "reward"
-                  ? "OdmÄna dostupnÃ¡ â
-"
-                  : "KÃ³d k uplatnÄnÃ­ â
-",
+                  ? "Odmena dostupna"
+                  : "Kupon k uplatneni",
             }
           : null;
 
@@ -379,10 +377,8 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
         ? {
             badge:
               redeemPurpose === "reward"
-                ? "OdmÄna dostupnÃ¡ â
-"
-                : "KupÃ³n dostupnÃ½ â
-",
+                ? "Odmena dostupna"
+                : "Kupon k uplatneni",
             instruction: "UkaÅ¾te u pokladny",
           }
         : {
