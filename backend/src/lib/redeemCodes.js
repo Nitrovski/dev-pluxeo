@@ -1,10 +1,11 @@
 // src/lib/redeemCodes.js
+import { buildCardEventPayload } from "./eventSchemas.js";
 
 function normCode(v) {
   return typeof v === "string" ? v.trim().toUpperCase() : "";
 }
 
-// Klíc pro vyhledávání: jen A-Z0-9 (bez pomlcek, mezer, atd.)
+// KlÃ­c pro vyhledÃ¡vÃ¡nÃ­: jen A-Z0-9 (bez pomlcek, mezer, atd.)
 function codeKey(v) {
   return normCode(v).replace(/[^A-Z0-9]/g, "");
 }
@@ -25,7 +26,7 @@ export function getActiveRedeemByPurpose(card, purpose, now = new Date()) {
   );
 }
 
-// Priorita pro zobrazení v pass.barcode (PassKit obvykle jen jeden)
+// Priorita pro zobrazenÃ­ v pass.barcode (PassKit obvykle jen jeden)
 export function pickRedeemForDisplay(card, now = new Date()) {
   return (
     getActiveRedeemByPurpose(card, "reward", now) ||
@@ -41,7 +42,7 @@ export function expireActiveRedeem(card, purpose, now = new Date()) {
   for (const rc of card.redeemCodes) {
     if (rc?.purpose === purpose && isActiveRedeem(rc, now)) {
       rc.status = "expired";
-      // Pozn.: expiredAt musí být ve schématu, jinak se v strict režimu neuloží.
+      // Pozn.: expiredAt musÃ­ bÃ½t ve schÃ©matu, jinak se v strict reÂžimu neuloÂžÃ­.
       rc.expiredAt = now;
       changed = true;
     }
@@ -49,8 +50,8 @@ export function expireActiveRedeem(card, purpose, now = new Date()) {
   return changed;
 }
 
-// Najdi aktivní redeem podle code (v rámci jednoho card dokumentu)
-// - porovnává se pres codeKey, aby prošel i scan bez pomlcek
+// Najdi aktivnÃ­ redeem podle code (v rÃ¡mci jednoho card dokumentu)
+// - porovnÃ¡vÃ¡ se pres codeKey, aby proÂšel i scan bez pomlcek
 export function findActiveRedeemByCode(card, code, now = new Date()) {
   const key = codeKey(code);
   if (!key) return null;
@@ -72,8 +73,8 @@ export function findActiveRedeemByCode(card, code, now = new Date()) {
 
 /**
  * rotateStrategy:
- * - "reject" -> když existuje active, vrátí error
- * - "expireAndIssue" -> aktivní expirovat a vydat nový
+ * - "reject" -> kdyÂž existuje active, vrÃ¡tÃ­ error
+ * - "expireAndIssue" -> aktivnÃ­ expirovat a vydat novÃ½
  */
 export function issueRedeemCode(
   card,
@@ -103,9 +104,9 @@ export function issueRedeemCode(
   }
 
   card.redeemCodes.push({
-    // code = pro display (muže obsahovat pomlcky)
+    // code = pro display (muÂže obsahovat pomlcky)
     code: normalizedDisplay,
-    // codeKey = pro vyhledávání (bez pomlcek)
+    // codeKey = pro vyhledÃ¡vÃ¡nÃ­ (bez pomlcek)
     codeKey: key,
 
     purpose,
@@ -122,11 +123,11 @@ export function issueRedeemCode(
 
 /**
  * Merchant scan helper:
- * - najde kartu podle merchantId + redeemCodes.codeKey (primárne)
- * - fallback pro stará data: redeemCodes.code (vcetne alnum varianty)
+ * - najde kartu podle merchantId + redeemCodes.codeKey (primÃ¡rne)
+ * - fallback pro starÃ¡ data: redeemCodes.code (vcetne alnum varianty)
  * - validuje active + validTo
  * - provede redeem podle redeemCode.purpose (reward/coupon)
- * - zapíše CardEvent
+ * - zapÃ­Âše CardEvent
  */
 export async function redeemByCodeForMerchant({
   Card,
@@ -141,15 +142,15 @@ export async function redeemByCodeForMerchant({
   const input = raw.trim().toUpperCase();
   const inputAlnum = input.replace(/[^A-Z0-9]/g, "");
 
-  // safe codeKey() – pokud tvoje codeKey() nekdy throwne, tak to chytíme
+  // safe codeKey() Â– pokud tvoje codeKey() nekdy throwne, tak to chytÃ­me
   let key = null;
   try {
-    // pokud máš codeKey helper, použij ho
+    // pokud mÃ¡Âš codeKey helper, pouÂžij ho
     key = codeKey(raw);
   } catch (e) {
     key = null;
   }
-  // fallback: alnum forma je pro lookup prakticky “codeKey”
+  // fallback: alnum forma je pro lookup prakticky Â“codeKeyÂ”
   if (!key) key = inputAlnum;
 
   if (!input || !key) {
@@ -195,23 +196,23 @@ export async function redeemByCodeForMerchant({
   const purpose = redeem?.purpose || "reward"; // backward compatible
 
   const logFailure = async (reason, status, error) => {
-    await CardEvent.create({
-      merchantId,
-      cardId: card._id,
-      walletToken: card.walletToken,
-      type: "REDEEM_FAILED",
-      deltaStamps: 0,
-      deltaRewards: 0,
-      cardType: card.type ?? "stamps",
-      templateId: card.templateId ?? null,
-      actor: { type: "merchant", actorId, source },
-      payload: {
-        code: input,
-        codeKey: key,
-        purpose,
-        reason,
-      },
-    });
+    await CardEvent.create(
+      buildCardEventPayload({
+        merchantId,
+        cardId: card._id,
+        walletToken: card.walletToken,
+        type: "REDEEM_FAILED",
+        cardType: card.type ?? "stamps",
+        templateId: card.templateId ?? null,
+        actor: { type: "merchant", actorId, source },
+        payload: {
+          code: input,
+          codeKey: key,
+          purpose,
+          reason,
+        },
+      })
+    );
 
     return { ok: false, status, error };
   };
@@ -315,18 +316,19 @@ export async function redeemByCodeForMerchant({
   }
 
   if (purpose === "reward") {
-    await CardEvent.create({
-      merchantId,
-      cardId: updatedCard._id,
-      walletToken: updatedCard.walletToken,
-      type: "REWARD_REDEEMED",
-      deltaStamps: 0,
-      deltaRewards: -1,
-      cardType: updatedCard.type ?? "stamps",
-      templateId: updatedCard.templateId ?? null,
-      actor: { type: "merchant", actorId, source },
-      payload: { code: input, codeKey: key, purpose: "reward" },
-    });
+    await CardEvent.create(
+      buildCardEventPayload({
+        merchantId,
+        cardId: updatedCard._id,
+        walletToken: updatedCard.walletToken,
+        type: "REWARD_REDEEMED",
+        deltaRewards: -1,
+        cardType: updatedCard.type ?? "stamps",
+        templateId: updatedCard.templateId ?? null,
+        actor: { type: "merchant", actorId, source },
+        payload: { code: input, codeKey: key, purpose: "reward" },
+      })
+    );
 
     return {
       ok: true,
@@ -339,23 +341,23 @@ export async function redeemByCodeForMerchant({
   }
 
   if (purpose === "coupon") {
-    await CardEvent.create({
-      merchantId,
-      cardId: updatedCard._id,
-      walletToken: updatedCard.walletToken,
-      type: "COUPON_REDEEMED",
-      deltaStamps: 0,
-      deltaRewards: 0,
-      cardType: updatedCard.type ?? "coupon",
-      templateId: updatedCard.templateId ?? null,
-      actor: { type: "merchant", actorId, source },
-      payload: {
-        code: input,
-        codeKey: key,
-        purpose: "coupon",
-        meta: redeem.meta ?? null,
-      },
-    });
+    await CardEvent.create(
+      buildCardEventPayload({
+        merchantId,
+        cardId: updatedCard._id,
+        walletToken: updatedCard.walletToken,
+        type: "COUPON_REDEEMED",
+        cardType: updatedCard.type ?? "coupon",
+        templateId: updatedCard.templateId ?? null,
+        actor: { type: "merchant", actorId, source },
+        payload: {
+          code: input,
+          codeKey: key,
+          purpose: "coupon",
+          meta: redeem.meta ?? null,
+        },
+      })
+    );
 
     return {
       ok: true,

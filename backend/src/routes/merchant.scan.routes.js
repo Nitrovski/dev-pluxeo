@@ -5,6 +5,7 @@ import { ScanEvent } from "../models/scanEvent.model.js";
 import { redeemByCodeForMerchant } from "../lib/redeemCodes.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { ScanFailureReasons } from "../constants/scanFailureReasons.js";
+import { buildScanEventPayload } from "../lib/eventSchemas.js";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
@@ -44,14 +45,16 @@ async function recordScanEvent(
   { merchantId = null, cardId = null, code = null, status, reason = null, payload = {} }
 ) {
   try {
-    await ScanEvent.create({
-      merchantId,
-      cardId,
-      code,
-      status,
-      reason,
-      payload: { ...payload, reason },
-    });
+    await ScanEvent.create(
+      buildScanEventPayload({
+        merchantId,
+        cardId,
+        code,
+        status,
+        reason,
+        payload: { ...payload, reason },
+      })
+    );
   } catch (err) {
     request?.log?.error?.({ err, status, reason }, "scan event persist failed");
   }
@@ -99,14 +102,14 @@ export async function merchantScanRoutes(fastify) {
         });
       }
 
-      // kandid·ti pro match (ruznÈ QR form·ty)
+      // kandid√°ti pro match (ruzn√© QR form√°ty)
       
       const codeCandidates = Array.from(
         new Set([code, codeAlt].filter(Boolean))
       );
 
       /* ------------------------------------------------------------ */
-      /* Pre-check cooldown (rychl· pojistka)                          */
+      /* Pre-check cooldown (rychl√° pojistka)                          */
       /* ------------------------------------------------------------ */
       const preCard = await Card.findOne(
         { merchantId, "redeemCodes.code": { $in: codeCandidates } },
@@ -166,7 +169,7 @@ export async function merchantScanRoutes(fastify) {
       );
 
       /* ------------------------------------------------------------ */
-      /* redeemedAt ñ ide·lne z DB                                    */
+      /* redeemedAt ¬ñ ide√°lne z DB                                    */
       /* ------------------------------------------------------------ */
       const redeemedAt =
         findRedeemedAtFromCard(updatedCard, res.code || usedCode) ||

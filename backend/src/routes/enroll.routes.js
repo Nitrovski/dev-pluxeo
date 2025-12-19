@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { Customer } from "../models/customer.model.js";
 import { Card } from "../models/card.model.js";
 import { CardTemplate } from "../models/cardTemplate.model.js";
+import { CardEvent } from "../models/cardEvent.model.js";
+import { buildCardEventPayload } from "../lib/eventSchemas.js";
 
 function generateWalletToken() {
   return crypto.randomBytes(24).toString("base64url");
@@ -10,7 +12,7 @@ function generateWalletToken() {
 export default async function enrollRoutes(fastify) {
   /**
    * POST /api/enroll
-   * Public endpoint: zákazník naskenuje merchant QR a vytvorí se mu karta.
+   * Public endpoint: zÃ¡kaznÃ­k naskenuje merchant QR a vytvorÃ­ se mu karta.
    * Body: { code: string, clientId: string }
    */
   fastify.post(
@@ -32,7 +34,7 @@ export default async function enrollRoutes(fastify) {
         const ip = request.ip;
         const ua = request.headers["user-agent"] || "";
 
-        // Najdi merchanta podle enrollment kódu
+        // Najdi merchanta podle enrollment kÃ³du
         const customer = await Customer.findOne({ "settings.enrollment.code": code });
         if (!customer) {
           request.log.warn({ ip, ua }, "Invalid enrollment code");
@@ -45,10 +47,10 @@ export default async function enrollRoutes(fastify) {
           return reply.code(403).send({ error: "Enrollment disabled" });
         }
 
-        // MVP: content snapshot zatím bereme z customers.settings.cardContent
+        // MVP: content snapshot zatÃ­m bereme z customers.settings.cardContent
         const cardContent = customer.settings?.cardContent || {};
 
-        // ? nacti aktuální template (zdroj pravdy pro program)
+        // ? nacti aktuÃ¡lnÃ­ template (zdroj pravdy pro program)
         const template = await CardTemplate.findOne({ merchantId: customer.merchantId }).lean();
 
         const programType =
@@ -59,7 +61,7 @@ export default async function enrollRoutes(fastify) {
             ? Number(template.rules.freeStampsToReward)
             : 10;
 
-        // 1) idempotence: pokud už karta pro tohle zarízení existuje, vrat ji
+        // 1) idempotence: pokud uÂž karta pro tohle zarÃ­zenÃ­ existuje, vrat ji
         const existing = await Card.findOne({ merchantId: customer.merchantId, clientId });
         if (existing) {
           request.log.info(
@@ -92,7 +94,7 @@ export default async function enrollRoutes(fastify) {
             rewards: 0,
             notes: "",
 
-            // ? nový programový typ na karte (tohle ti dnes chybí)
+            // ? novÃ½ programovÃ½ typ na karte (tohle ti dnes chybÃ­)
             type: programType,
 
             // ? stamps pravidlo pouze pokud je stamps program
@@ -100,6 +102,22 @@ export default async function enrollRoutes(fastify) {
           };
 
           const card = await Card.create(cardDoc);
+
+          await CardEvent.create(
+            buildCardEventPayload({
+              merchantId: customer.merchantId,
+              cardId: card._id,
+              walletToken: card.walletToken,
+              type: "CARD_CREATED",
+              cardType: card.type ?? "stamps",
+              templateId: card.templateId ?? null,
+              actor: { type: "system", source: "public-enroll" },
+              payload: {
+                customerId: customer.customerId,
+                clientId,
+              },
+            })
+          );
 
           request.log.info(
             {
@@ -125,7 +143,7 @@ export default async function enrollRoutes(fastify) {
             },
           });
         } catch (err) {
-          // race condition: pokud to paralelne vytvoril jiný request, docti a vrat
+          // race condition: pokud to paralelne vytvoril jinÃ½ request, docti a vrat
           if (err?.code === 11000) {
             const card = await Card.findOne({ merchantId: customer.merchantId, clientId });
             if (card) {

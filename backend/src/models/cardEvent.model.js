@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { CARD_EVENT_TYPES } from "../lib/eventSchemas.js";
 const { Schema, model } = mongoose;
 
 const CardEventSchema = new Schema(
@@ -10,25 +11,13 @@ const CardEventSchema = new Schema(
     walletToken: { type: String, index: true }, // debug / lookup
 
     // Typ eventu
-    type: {
-      type: String,
-      required: true,
-      enum: [
-        "CARD_CREATED",
-        "STAMP_ADDED",
-        "REWARD_REDEEMED",
-        "COUPON_REDEEMED",
-        "REDEEM_FAILED",
-        "CARD_UPDATED",
-      ],
-      index: true,
-    },
+    type: { type: String, required: true, enum: CARD_EVENT_TYPES, index: true },
 
-    // Pro agregace (rychlé soucty)
+    // Pro agregace (rychl soucty)
     deltaStamps: { type: Number, default: 0 },
     deltaRewards: { type: Number, default: 0 },
 
-    // Card “context” – pro budoucí typy
+    // Card context  pro budouc typy
     cardType: {
       type: String,
       enum: ["stamps", "coupon", "loyalty", "business"],
@@ -37,7 +26,7 @@ const CardEventSchema = new Schema(
     },
     templateId: { type: String, default: null, index: true },
 
-    // Kdo to udelal (do budoucna staff úcty / zarízení)
+    // Kdo to udelal (do budoucna staff cty / zarzen)
     actor: {
       type: {
         type: String,
@@ -48,7 +37,7 @@ const CardEventSchema = new Schema(
       source: { type: String, default: "merchant-app" }, // "scan", "admin", "api"
     },
 
-    // Flexibilní data pro budoucnost (napr. QR payload, coupon code, device info...)
+    // Flexibiln data pro budoucnost (napr. QR payload, coupon code, device info...)
     payload: { type: Schema.Types.Mixed, default: {} },
   },
   { timestamps: { createdAt: true, updatedAt: false } }
