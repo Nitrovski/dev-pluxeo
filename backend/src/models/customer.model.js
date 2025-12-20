@@ -2,7 +2,17 @@ import mongoose from "mongoose";
 
 const { Schema, model } = mongoose;
 
-// Enrollment (statickı QR kód obchodníka)
+const GoogleWalletSettingsSchema = new Schema(
+  {
+    classId: {
+      type: String,
+      default: null,
+    },
+  },
+  { _id: false }
+);
+
+// Enrollment (statickÃ½ QR kÃ³d obchodnÃ­ka)
 const EnrollmentSchema = new Schema(
   {
     code: {
@@ -19,7 +29,7 @@ const EnrollmentSchema = new Schema(
       type: Date,
       default: null,
     },
-    // ? historie rotací (pro limit 3/24h)
+    // ? historie rotacÃ­ (pro limit 3/24h)
     rotations: {
       type: [Date],
       default: [],
@@ -31,7 +41,7 @@ const EnrollmentSchema = new Schema(
 
 const CustomerSettingsSchema = new Schema(
   {
-    // (volitelné) pokud chceš dret "single theme color" kvuli kompatibilite, nech tu
+    // (volitelnÃ©) pokud chceÂš drÂet "single theme color" kvuli kompatibilite, nech tu
     themeColor: {
       type: String,
       default: "#FF9900",
@@ -42,7 +52,12 @@ const CustomerSettingsSchema = new Schema(
       default: null,
     },
 
-    // enrollment info pro statickı QR
+    googleWallet: {
+      type: GoogleWalletSettingsSchema,
+      default: () => ({}),
+    },
+
+    // enrollment info pro statickÃ½ QR
     enrollment: {
       type: EnrollmentSchema,
       default: () => ({}),
@@ -52,8 +67,8 @@ const CustomerSettingsSchema = new Schema(
 );
 
 /**
- * CardContent = OVERRIDE obsahu/vzhledu pro konkrétního zákazníka (pokud se pouívá)
- * Zdroj pravdy pro "template/program" je CardTemplate (globální pro merchanta).
+ * CardContent = OVERRIDE obsahu/vzhledu pro konkrÃ©tnÃ­ho zÃ¡kaznÃ­ka (pokud se pouÂÃ­vÃ¡)
+ * Zdroj pravdy pro "template/program" je CardTemplate (globÃ¡lnÃ­ pro merchanta).
  */
 const CardContentSchema = new Schema(
   {
@@ -89,11 +104,11 @@ const CustomerSchema = new Schema(
     phone: { type: String },
     ico: { type: String },
 
-    // verejné ID (slug), co je v QR / URL
+    // verejnÃ© ID (slug), co je v QR / URL
     customerId: {
       type: String,
       required: true,
-      unique: true, // pokud chceš unikátní globálne napríc celım systémem, nech to
+      unique: true, // pokud chceÂš unikÃ¡tnÃ­ globÃ¡lne naprÃ­c celÃ½m systÃ©mem, nech to
       index: true,
     },
 
@@ -115,9 +130,9 @@ const CustomerSchema = new Schema(
   { timestamps: true }
 );
 
-// ? volitelné do budoucna (NEZAPÍNÁM ti to automaticky):
-// Pokud bys chtel, aby customerId (slug) mohl bıt stejnı u ruznıch merchantu,
-// tak zruš unique:true na customerId a pouij tento index:
+// ? volitelnÃ© do budoucna (NEZAPÃNÃM ti to automaticky):
+// Pokud bys chtel, aby customerId (slug) mohl bÃ½t stejnÃ½ u ruznÃ½ch merchantu,
+// tak zruÂš unique:true na customerId a pouÂij tento index:
 // CustomerSchema.index({ merchantId: 1, customerId: 1 }, { unique: true });
 
 export const Customer = model("Customer", CustomerSchema);
