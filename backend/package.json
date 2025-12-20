@@ -24,6 +24,7 @@
     "@clerk/fastify": "^2.6.9",
     "@fastify/cors": "^10.0.0",
     "bcrypt": "^6.0.0",
+    "google-auth-library": "^9.14.3",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "fastify": "^5.6.2",
