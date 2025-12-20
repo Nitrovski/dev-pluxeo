@@ -8,16 +8,53 @@ import { makeClassId, makeObjectId } from "./googleWalletIds.js";
 
 const DEFAULT_PROGRAM_NAME = "Pluxeo";
 const DEFAULT_PRIMARY_COLOR = "#FF9900";
-const DEFAULT_LOGO_URL =
-  process.env.PLUXEO_DEFAULT_LOGO_URL ||
-  "https://via.placeholder.com/512x512.png?text=Pluxeo";
+const DEV_DEFAULT_LOGO_URL =
+  "https://storage.googleapis.com/wallet-lab-tools-codelab-artifacts/LoyaltyClass/loyalty_class_logo.png";
 const DEFAULT_HEADLINE = "Věrnostní program";
 const DEFAULT_SUBHEADLINE = "Sbírejte body a odměny s Pluxeo.";
 
+function isValidHttpsUrl(url) {
+  return typeof url === "string" && url.trim().toLowerCase().startsWith("https://");
+}
+
+function resolveDefaultLogoUrl() {
+  const envLogoUrl = googleWalletConfig.defaultLogoUrl;
+
+  if (isValidHttpsUrl(envLogoUrl)) {
+    return envLogoUrl.trim();
+  }
+
+  if (envLogoUrl) {
+    console.warn(
+      "GOOGLE_WALLET_DEFAULT_LOGO_URL must start with https://. Ignoring invalid value."
+    );
+  }
+
+  if (googleWalletConfig.isDevEnv) {
+    return DEV_DEFAULT_LOGO_URL;
+  }
+
+  const errorMessage =
+    "Missing valid default Google Wallet logo URL. Set GOOGLE_WALLET_DEFAULT_LOGO_URL to an https:// URL.";
+  console.error(errorMessage);
+  const error = new Error(errorMessage);
+  error.statusCode = 500;
+  throw error;
+}
+
+function resolveProgramLogoUrl(customer) {
+  const customerLogo = customer?.settings?.logoUrl?.trim();
+
+  if (isValidHttpsUrl(customerLogo)) {
+    return customerLogo;
+  }
+
+  return resolveDefaultLogoUrl();
+}
+
 function buildLoyaltyClassPayload({ classId, customer }) {
   const programName = (customer?.name || "").trim() || DEFAULT_PROGRAM_NAME;
-  const logoUrl =
-    customer?.settings?.logoUrl?.trim() || DEFAULT_LOGO_URL;
+  const logoUrl = resolveProgramLogoUrl(customer);
   const primaryColor =
     customer?.settings?.themeColor?.trim() || DEFAULT_PRIMARY_COLOR;
 
