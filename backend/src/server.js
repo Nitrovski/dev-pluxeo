@@ -12,6 +12,7 @@ import rateLimit from "@fastify/rate-limit";
 import { merchantScanRoutes } from "./routes/merchant.scan.routes.js";
 import { publicCardRoutes } from "./routes/public.card.routes.js";
 import { merchantStampRoutes } from "./routes/merchant.stamp.routes.js";
+import { publicGoogleWalletRoutes } from "./routes/public.wallet.google.routes.js";
 
 import { Card } from "./models/card.model.js";
 
@@ -99,6 +100,7 @@ const start = async () => {
     fastify.register(enrollRoutes);
     fastify.register(merchantScanRoutes);
     fastify.register(publicCardRoutes);
+    fastify.register(publicGoogleWalletRoutes);
     fastify.register(merchantStampRoutes);
     fastify.register(merchantWalletGoogleRoutes);
 
