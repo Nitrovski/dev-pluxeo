@@ -1,7 +1,8 @@
 import { googleWalletConfig } from "../config/googleWallet.config.js";
+import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
 import { walletRequest } from "./googleWalletClient.js";
-import { makeClassId } from "./googleWalletIds.js";
+import { makeClassId, makeObjectId } from "./googleWalletIds.js";
 
 const DEFAULT_PROGRAM_NAME = "Pluxeo";
 const DEFAULT_PRIMARY_COLOR = "#FF9900";
@@ -41,6 +42,59 @@ function persistClassId(customer, classId) {
   customer.settings.googleWallet = customer.settings.googleWallet || {};
   customer.settings.googleWallet.classId = classId;
   return customer.save();
+}
+
+function pickActiveRedeemCode(redeemCodes = []) {
+  const activeCodes = redeemCodes.filter(({ status }) => status === "active");
+  return (
+    activeCodes.find(({ purpose }) => purpose === "reward") ||
+    activeCodes.find(({ purpose }) => purpose === "coupon") ||
+    null
+  );
+}
+
+function buildLoyaltyObjectPayload({ objectId, classId, card, redeemCode }) {
+  const headline =
+    (card?.rewards || 0) > 0 ? "Odměna dostupná ✅" : "Sbírej razítka";
+
+  const basePayload = {
+    id: objectId,
+    classId,
+    state: "ACTIVE",
+    accountId: String(card?._id || ""),
+    accountName: "Pluxeo karta",
+    loyaltyPoints: {
+      label: "Razítka",
+      balance: { int: card?.stamps ?? 0 },
+    },
+    infoModuleData: {
+      labelValueRows: [
+        {
+          columns: [
+            { label: "Razítka", value: String(card?.stamps ?? 0) },
+            { label: "Odměny", value: String(card?.rewards ?? 0) },
+          ],
+        },
+      ],
+    },
+    textModulesData: [
+      {
+        header: headline,
+        body: `Razítka: ${card?.stamps ?? 0}\nOdměny: ${card?.rewards ?? 0}`,
+      },
+    ],
+  };
+
+  if (redeemCode?.code) {
+    basePayload.barcode = {
+      type: "QR_CODE",
+      value: redeemCode.code,
+      alternateText:
+        redeemCode.purpose === "coupon" ? "Kupón k uplatnění" : "Odměna k uplatnění",
+    };
+  }
+
+  return basePayload;
 }
 
 export async function ensureLoyaltyClassForMerchant({ merchantId }) {
@@ -84,4 +138,65 @@ export async function ensureLoyaltyClassForMerchant({ merchantId }) {
   await persistClassId(customer, classId);
 
   return { classId, existed: false };
+}
+
+export async function ensureLoyaltyObjectForCard({ cardId }) {
+  if (!cardId) {
+    throw new Error("cardId is required");
+  }
+
+  const card = await Card.findById(cardId);
+  if (!card) {
+    throw new Error("Card not found");
+  }
+
+  const { classId } = await ensureLoyaltyClassForMerchant({
+    merchantId: card.merchantId,
+  });
+
+  const objectId = makeObjectId({
+    issuerId: googleWalletConfig.issuerId,
+    cardId,
+  });
+
+  const redeemCode = pickActiveRedeemCode(card.redeemCodes);
+  const loyaltyObjectPayload = buildLoyaltyObjectPayload({
+    objectId,
+    classId,
+    card,
+    redeemCode,
+  });
+
+  let existed = false;
+
+  try {
+    await walletRequest({
+      method: "GET",
+      path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+    });
+
+    await walletRequest({
+      method: "PATCH",
+      path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+      body: loyaltyObjectPayload,
+    });
+
+    existed = true;
+  } catch (err) {
+    if (err?.status !== 404) {
+      throw err;
+    }
+
+    await walletRequest({
+      method: "POST",
+      path: "/walletobjects/v1/loyaltyObject",
+      body: loyaltyObjectPayload,
+    });
+  }
+
+  card.googleWallet = card.googleWallet || {};
+  card.googleWallet.objectId = objectId;
+  await card.save();
+
+  return { objectId, existed };
 }
