@@ -253,3 +253,15 @@ export async function createAddToWalletLinkForCard(cardId) {
 
   return { url, classId, objectId };
 }
+
+export async function syncGoogleWalletObject(cardId, logger = null) {
+  try {
+    await ensureLoyaltyObjectForCard({ cardId });
+  } catch (err) {
+    if (logger?.warn) {
+      logger.warn({ err, cardId }, "google wallet sync failed");
+    } else {
+      console.warn("google wallet sync failed", err);
+    }
+  }
+}
