@@ -31,6 +31,7 @@ import cardRoutes from './routes/card.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import cardTemplateRoutes from "./routes/cardTemplate.routes.js";
 import { googleWalletConfig } from "./config/googleWallet.config.js";
+import { merchantWalletGoogleRoutes } from "./routes/merchant.wallet.google.routes.js";
 
 const fastify = Fastify({
   logger: true,
@@ -99,6 +100,7 @@ const start = async () => {
     fastify.register(merchantScanRoutes);
     fastify.register(publicCardRoutes);
     fastify.register(merchantStampRoutes);
+    fastify.register(merchantWalletGoogleRoutes);
 
 
     // Start serveru
