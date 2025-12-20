@@ -1,7 +1,7 @@
 // src/server.js
+import 'dotenv/config';
 import Fastify from 'fastify';
 import mongoose from 'mongoose';
-import dotenv from 'dotenv';
 import cors from '@fastify/cors';
 import { clerkAuthMiddleware } from "./middleware/auth.js"; //import middleware
 import meRoutes from "./routes/me.routes.js";
@@ -30,8 +30,7 @@ import { clerkPlugin } from '@clerk/fastify';
 import cardRoutes from './routes/card.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import cardTemplateRoutes from "./routes/cardTemplate.routes.js";
-
-dotenv.config();
+import { googleWalletConfig } from "./config/googleWallet.config.js";
 
 const fastify = Fastify({
   logger: true,
@@ -44,26 +43,31 @@ clerkAuthMiddleware(fastify);
 const mongoUri = process.env.MONGODB_URI;
 
 if (!mongoUri) {
-  fastify.log.error('? Chybí MONGODB_URI v env promenných');
+  fastify.log.error('Chybi MONGODB_URI v env promennych');
   process.exit(1);
 }
 
-// Clerk env promenné
+// Clerk env promenne
 const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 const clerkPublishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 
 if (!clerkSecretKey || !clerkPublishableKey) {
-  fastify.log.error('? Chybí CLERK_SECRET_KEY nebo CLERK_PUBLISHABLE_KEY v env promenných');
+  fastify.log.error('Chybi CLERK_SECRET_KEY nebo CLERK_PUBLISHABLE_KEY v env promennych');
   process.exit(1);
 }
 
+fastify.log.info({
+  issuerId: googleWalletConfig.issuerId,
+  classPrefix: googleWalletConfig.classPrefix,
+}, 'Google Wallet config loaded');
+
 const start = async () => {
   try {
-    // Pripojení k MongoDB
+    // Pripojeni k MongoDB
     await mongoose.connect(mongoUri);
-    fastify.log.info('? MongoDB pripojena');
+    fastify.log.info('MongoDB pripojena');
 
-    // CORS – povolíme všechny originy (MVP)
+    // CORS - povolime vsechny originy (MVP)
     await fastify.register(cors, {
       origin: true,
       methods: ['GET', 'POST', 'PATCH', 'PUT', 'DELETE', 'OPTIONS'],
@@ -71,9 +75,9 @@ const start = async () => {
     });
 
     await fastify.register(rateLimit, {
-      global: false, // jen na vybrané routy
+      global: false, // jen na vybrane routy
     });
-    // Clerk plugin musí být registrován PRED routami
+    // Clerk plugin musi byt registrovan PRED routami
     await fastify.register(clerkPlugin, {
       secretKey: clerkSecretKey,
       publishableKey: clerkPublishableKey,
@@ -81,13 +85,13 @@ const start = async () => {
 
     // Health-check
     fastify.get('/', async () => {
-      return { status: 'Pluxeo API beží' };
+      return { status: 'Pluxeo API bezi' };
     });
 
-    // API routes (autorizace rešíme pres getAuth(request))
+    // API routes (autorizace resime pres getAuth(request))
     fastify.register(cardRoutes);
     fastify.register(customerRoutes);
-    fastify.register(cardTemplateRoutes); // pridáni template rout
+    fastify.register(cardTemplateRoutes); // pridani template rout
     fastify.register(meRoutes);
     fastify.register(dashboardRoutes);
     fastify.register(merchantEnrollmentRoutes);
@@ -95,15 +99,15 @@ const start = async () => {
     fastify.register(merchantScanRoutes);
     fastify.register(publicCardRoutes);
     fastify.register(merchantStampRoutes);
- 
+
 
     // Start serveru
     const port = process.env.PORT || 3000;
     await fastify.listen({ port, host: '0.0.0.0' });
 
-    fastify.log.info(`?? Server beží na portu ${port}`);
+    fastify.log.info(`Server bezi na portu ${port}`);
   } catch (err) {
-    fastify.log.error(err, '? Chyba pri startu serveru');
+    fastify.log.error(err, 'Chyba pri startu serveru');
     process.exit(1);
   }
 };
