@@ -142,30 +142,30 @@ export async function ensureLoyaltyClassForMerchant({ merchantId }) {
   return { classId, existed: false };
 }
 
-export async function ensureLoyaltyObjectForCard({ cardId }) {
-  if (!cardId) {
-    throw new Error("cardId is required");
+export async function ensureLoyaltyObjectForCard({ cardId, card }) {
+  if (!cardId && !card) {
+    throw new Error("cardId or card is required");
   }
 
-  const card = await Card.findById(cardId);
-  if (!card) {
+  const cardDoc = card || (await Card.findById(cardId));
+  if (!cardDoc) {
     throw new Error("Card not found");
   }
 
   const { classId } = await ensureLoyaltyClassForMerchant({
-    merchantId: card.merchantId,
+    merchantId: cardDoc.merchantId,
   });
 
   const objectId = makeObjectId({
     issuerId: googleWalletConfig.issuerId,
-    cardId,
+    cardId: cardId || cardDoc._id,
   });
 
-  const redeemCode = pickActiveRedeemCode(card.redeemCodes);
+  const redeemCode = pickActiveRedeemCode(cardDoc.redeemCodes);
   const loyaltyObjectPayload = buildLoyaltyObjectPayload({
     objectId,
     classId,
-    card,
+    card: cardDoc,
     redeemCode,
   });
 
@@ -196,11 +196,25 @@ export async function ensureLoyaltyObjectForCard({ cardId }) {
     });
   }
 
-  card.googleWallet = card.googleWallet || {};
-  card.googleWallet.objectId = objectId;
-  await card.save();
+  cardDoc.googleWallet = cardDoc.googleWallet || {};
+  cardDoc.googleWallet.objectId = objectId;
+  await cardDoc.save();
 
   return { objectId, existed };
+}
+
+export async function ensureLoyaltyObjectForWalletToken({ walletToken }) {
+  if (!walletToken) {
+    throw new Error("walletToken is required");
+  }
+
+  const card = await Card.findOne({ walletToken });
+
+  if (!card) {
+    throw new Error("Card not found");
+  }
+
+  return ensureLoyaltyObjectForCard({ card });
 }
 
 export function buildAddToGoogleWalletUrl({ classId, objectId }) {
