@@ -1,7 +1,9 @@
 import { googleWalletConfig } from "../config/googleWallet.config.js";
 import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
+import jwt from "jsonwebtoken";
 import { walletRequest } from "./googleWalletClient.js";
+import { loadGoogleWalletServiceAccount } from "./googleWalletAuth.js";
 import { makeClassId, makeObjectId } from "./googleWalletIds.js";
 
 const DEFAULT_PROGRAM_NAME = "Pluxeo";
@@ -199,4 +201,55 @@ export async function ensureLoyaltyObjectForCard({ cardId }) {
   await card.save();
 
   return { objectId, existed };
+}
+
+export function buildAddToGoogleWalletUrl({ classId, objectId }) {
+  if (!objectId) {
+    throw new Error("objectId is required");
+  }
+
+  const serviceAccount = loadGoogleWalletServiceAccount();
+
+  const walletPayload = {
+    loyaltyObjects: [{ id: objectId }],
+  };
+
+  if (classId) {
+    walletPayload.loyaltyClasses = [{ id: classId }];
+  }
+
+  const token = jwt.sign(
+    {
+      iss: serviceAccount.client_email,
+      aud: "google",
+      typ: "savetowallet",
+      payload: walletPayload,
+    },
+    serviceAccount.private_key,
+    { algorithm: "RS256" }
+  );
+
+  return `https://pay.google.com/gp/v/save/${token}`;
+}
+
+export async function createAddToWalletLinkForCard(cardId) {
+  if (!cardId) {
+    throw new Error("cardId is required");
+  }
+
+  const card = await Card.findById(cardId);
+
+  if (!card) {
+    throw new Error("Card not found");
+  }
+
+  const { classId } = await ensureLoyaltyClassForMerchant({
+    merchantId: card.merchantId,
+  });
+
+  const { objectId } = await ensureLoyaltyObjectForCard({ cardId });
+
+  const url = buildAddToGoogleWalletUrl({ classId, objectId });
+
+  return { url, classId, objectId };
 }
