@@ -259,26 +259,35 @@ export function buildAddToGoogleWalletUrl({ classId, objectId }) {
     throw new Error("objectId is required");
   }
 
-  const serviceAccount = loadGoogleWalletServiceAccount();
-
-  const walletPayload = {
-    loyaltyObjects: [{ id: objectId }],
-  };
-
-  if (classId) {
-    walletPayload.loyaltyClasses = [{ id: classId }];
+  if (!classId) {
+    throw new Error("classId is required for Save to Google Wallet");
   }
 
-  const token = jwt.sign(
-    {
-      iss: serviceAccount.client_email,
-      aud: "google",
-      typ: "savetowallet",
-      payload: walletPayload,
+  const serviceAccount = loadGoogleWalletServiceAccount();
+
+  const claims = {
+    iss: serviceAccount.client_email,
+    aud: "google",
+    typ: "savetowallet",
+    payload: {
+      loyaltyObjects: [
+        {
+          id: objectId,
+          classId,
+        },
+      ],
     },
-    serviceAccount.private_key,
-    { algorithm: "RS256" }
-  );
+  };
+
+  if (googleWalletConfig.isDevEnv) {
+    console.log("SAVE_TO_WALLET_CLAIMS", {
+      classId,
+      objectId,
+      claims,
+    });
+  }
+
+  const token = jwt.sign(claims, serviceAccount.private_key, { algorithm: "RS256" });
 
   return `https://pay.google.com/gp/v/save/${token}`;
 }

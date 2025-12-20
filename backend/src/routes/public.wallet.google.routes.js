@@ -4,6 +4,8 @@ import {
   ensureLoyaltyClassForMerchant,
   ensureLoyaltyObjectForCard,
 } from "../lib/googleWalletPass.js";
+import { walletRequest } from "../lib/googleWalletClient.js";
+import { googleWalletConfig } from "../config/googleWallet.config.js";
 
 export async function publicGoogleWalletRoutes(fastify) {
   // DEV/TEST: public Add-to-Google-Wallet by walletToken
@@ -25,6 +27,35 @@ export async function publicGoogleWalletRoutes(fastify) {
         merchantId: card.merchantId,
       });
       const { objectId } = await ensureLoyaltyObjectForCard({ card });
+
+      if (googleWalletConfig.isDevEnv) {
+        try {
+          await walletRequest({
+            method: "GET",
+            path: `/walletobjects/v1/loyaltyClass/${classId}`,
+          });
+
+          await walletRequest({
+            method: "GET",
+            path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+          });
+        } catch (verifyErr) {
+          if (verifyErr?.status === 403 || verifyErr?.status === 404) {
+            request.log?.error?.(
+              { err: verifyErr, classId, objectId },
+              "Google Wallet class/object not readable"
+            );
+
+            return reply.code(500).send({
+              error: "Google Wallet class/object not readable",
+              classId,
+              objectId,
+            });
+          }
+
+          throw verifyErr;
+        }
+      }
       const url = buildAddToGoogleWalletUrl({ classId, objectId });
 
       return reply.send({ url, classId, objectId });
