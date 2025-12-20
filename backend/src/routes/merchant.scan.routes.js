@@ -6,6 +6,7 @@ import { redeemByCodeForMerchant } from "../lib/redeemCodes.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { ScanFailureReasons } from "../constants/scanFailureReasons.js";
 import { buildScanEventPayload } from "../lib/eventSchemas.js";
+import { syncGoogleWalletObject } from "../lib/googleWalletPass.js";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
@@ -164,6 +165,8 @@ export async function merchantScanRoutes(fastify) {
       /* ------------------------------------------------------------ */
       /* Public payload (wallet view)                                 */
       /* ------------------------------------------------------------ */
+      await syncGoogleWalletObject(String(updatedCard._id), request.log);
+
       const publicPayload = await buildPublicCardPayload(
         String(updatedCard._id)
       );

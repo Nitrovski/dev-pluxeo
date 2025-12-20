@@ -6,6 +6,7 @@ import { issueRedeemCode } from "../lib/redeemCodes.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
+import { syncGoogleWalletObject } from "../lib/googleWalletPass.js";
 
 function normToken(v) {
   return String(v || "").trim();
@@ -134,6 +135,8 @@ export async function merchantStampRoutes(fastify) {
           },
         })
       );
+
+      await syncGoogleWalletObject(String(card._id), request.log);
 
       // 5) vrat updated public payload
       const publicPayload = await buildPublicCardPayload(String(card._id));
