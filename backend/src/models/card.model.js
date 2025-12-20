@@ -4,11 +4,11 @@ const { Schema, model } = mongoose;
 
 /**
  * Redeem code subdocument
- * - udrûujeme historii: active -> redeemed/expired
+ * - udr≈æujeme historii: active -> redeemed/expired
  */
 const RedeemCodeSchema = new Schema(
   {
-    // plaintext kÛd (scan-friendly)
+    // plaintext k√≥d (scan-friendly)
     code: {
       type: String,
       required: true,
@@ -16,14 +16,14 @@ const RedeemCodeSchema = new Schema(
       index: true,
     },
 
-    // normalizovan˝ klÌc pro scan (bez pomlcek)
+    // normalizovan√Ω kl√≠c pro scan (bez pomlcek)
     codeKey: {
       type: String,
       required: true,
       index: true,
     },
 
-    // reward = odmena za razÌtka, coupon = slevov˝ kupon
+    // reward = odmena za raz√≠tka, coupon = slevov√Ω kupon
     purpose: {
       type: String,
       enum: ["reward", "coupon"],
@@ -32,7 +32,7 @@ const RedeemCodeSchema = new Schema(
       index: true,
     },
 
-    // active = cek· na uplatnenÌ, redeemed = pouûito, expired = neplatnÈ
+    // active = cek√° na uplatnen√≠, redeemed = pou≈æito, expired = neplatn√©
     status: {
       type: String,
       enum: ["active", "redeemed", "expired"],
@@ -41,7 +41,7 @@ const RedeemCodeSchema = new Schema(
       index: true,
     },
 
-    // voliteln· expirace (hlavne pro coupon)
+    // voliteln√° expirace (hlavne pro coupon)
     validTo: { type: Date, default: null },
 
     // audit
@@ -49,19 +49,19 @@ const RedeemCodeSchema = new Schema(
     redeemedAt: { type: Date, default: null },
     expiredAt: { type: Date, default: null },
 
-    // volitelnÈ metadata
+    // voliteln√© metadata
     meta: { type: Schema.Types.Mixed, default: null },
   },
   {
     _id: false,
-    timestamps: true, // ?? KLÕCOV…
+    timestamps: true, // ?? KL√çCOV√â
   }
 );
 
 
 const ShareCardSchema = new Schema(
   {
-    // verejn˝ share kÛd (random, scan-friendly)
+    // verejn√Ω share k√≥d (random, scan-friendly)
     code: { type: String, default: null, index: true },
 
     status: {
@@ -84,7 +84,17 @@ const CardSchema = new Schema(
       index: true,
     },
 
-    // dedupe pro enroll (FE posÌl· clientId)
+    googleWallet: {
+      type: new Schema(
+        {
+          objectId: { type: String, default: null },
+        },
+        { _id: false }
+      ),
+      default: {},
+    },
+
+    // dedupe pro enroll (FE pos√≠l√° clientId)
     clientId: { type: String, index: true },
 
     customerId: {
@@ -105,7 +115,7 @@ const CardSchema = new Schema(
       index: true,
     },
 
-    // (zatÌm nech·v·me ó pozdeji muûeme odstranit, protoûe program je glob·lnÌ)
+    // (zat√≠m nech√°v√°me ‚Äî pozdeji mu≈æeme odstranit, proto≈æe program je glob√°ln√≠)
     templateId: {
       type: Schema.Types.ObjectId,
       ref: "CardTemplate",
@@ -113,7 +123,7 @@ const CardSchema = new Schema(
       index: true,
     },
 
-    // (zatÌm nech·v·me ó pozdeji muûeme odstranit, protoûe threshold bude z CardTemplate)
+    // (zat√≠m nech√°v√°me ‚Äî pozdeji mu≈æeme odstranit, proto≈æe threshold bude z CardTemplate)
     stampsPerReward: {
       type: Number,
       default: 10,
@@ -138,8 +148,8 @@ const CardSchema = new Schema(
       min: 0,
     },
 
-    // seznam redeem kÛdu (plaintext), pro uplatnenÌ odmen / couponu
-    // drûÌme historii, ale public payload vybÌr· jen 1 aktivnÌ dle priority
+    // seznam redeem k√≥du (plaintext), pro uplatnen√≠ odmen / couponu
+    // dr≈æ√≠me historii, ale public payload vyb√≠r√° jen 1 aktivn√≠ dle priority
     redeemCodes: {
       type: [RedeemCodeSchema],
       default: [],
@@ -150,7 +160,7 @@ const CardSchema = new Schema(
       default: "",
     },
 
-    // typ programu (zatÌm)
+    // typ programu (zat√≠m)
     type: {
       type: String,
       default: "stamps",
@@ -161,7 +171,7 @@ const CardSchema = new Schema(
 );
 
 /**
- * Dedupe index pro enroll: merchantId + clientId musÌ b˝t unik·tnÌ, pokud clientId existuje
+ * Dedupe index pro enroll: merchantId + clientId mus√≠ b√Ωt unik√°tn√≠, pokud clientId existuje
  */
 CardSchema.index(
   { merchantId: 1, clientId: 1 },
@@ -175,8 +185,8 @@ CardSchema.index(
 
 /**
  * Scan lookup index: merchantId + redeemCodes.code (NE-unique)
- * - potrebujeme rychle najÌt kartu podle redeem kÛdu
- * - unik·tnost kÛdu reöÌme gener·torem (a prÌpadne pozdeji glob·lnÌm unique)
+ * - potrebujeme rychle naj√≠t kartu podle redeem k√≥du
+ * - unik√°tnost k√≥du re≈°√≠me gener√°torem (a pr√≠padne pozdeji glob√°ln√≠m unique)
  */
 CardSchema.index(
   { merchantId: 1, "redeemCodes.code": 1 }
