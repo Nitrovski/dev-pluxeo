@@ -48,6 +48,7 @@ function toApi(template, merchantId) {
     headline: template?.headline || "",
     subheadline: template?.subheadline || "",
     customMessage: template?.customMessage || "",
+    promoText: template?.promoText || "",
     openingHours: template?.openingHours || "",
     websiteUrl: template?.websiteUrl || "",
 
@@ -111,6 +112,7 @@ async function cardTemplateRoutes(fastify, options) {
               headline: "",
               subheadline: "",
               customMessage: "",
+              promoText: "",
               openingHours: "",
               websiteUrl: "",
               rules: {
@@ -172,6 +174,7 @@ async function cardTemplateRoutes(fastify, options) {
         headline: payload.headline,
         subheadline: payload.subheadline,
         customMessage: payload.customMessage,
+        promoText: payload.promoText,
         openingHours: payload.openingHours,
         websiteUrl: payload.websiteUrl,
         primaryColor: payload.primaryColor,
@@ -266,6 +269,8 @@ async function cardTemplateRoutes(fastify, options) {
           }
         } else if (key === "programType") {
           $set.programType = value === "coupon" ? "coupon" : "stamps";
+        } else if (key === "promoText") {
+          $set.promoText = pickString(value, "");
         } else if (key === "logoUrl") {
           $set.logoUrl = pickString(value, "");
         } else if (typeof value === "string") {

@@ -26,6 +26,7 @@ const CardTemplateSchema = new Schema(
     headline: { type: String, default: "" },
     subheadline: { type: String, default: "" },
     customMessage: { type: String, default: "" },
+    promoText: { type: String, default: "" },
     openingHours: { type: String, default: "" },
     websiteUrl: { type: String, default: "" },
 
