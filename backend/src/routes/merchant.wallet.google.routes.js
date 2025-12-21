@@ -8,6 +8,21 @@ import {
 } from "../lib/googleWalletPass.js";
 
 export async function merchantWalletGoogleRoutes(fastify) {
+  fastify.addContentTypeParser(
+    "application/json",
+    { parseAs: "string" },
+    (request, body, done) => {
+      if (!body) return done(null, {});
+
+      try {
+        const json = JSON.parse(body);
+        return done(null, json);
+      } catch (err) {
+        return done(err);
+      }
+    }
+  );
+
   fastify.post("/api/merchant/wallet/google/link", async (request, reply) => {
     try {
       const { isAuthenticated, userId } = getAuth(request);
