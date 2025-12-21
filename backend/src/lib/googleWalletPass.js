@@ -68,6 +68,22 @@ function sanitizeLinks(links) {
     .filter((link) => isValidHttpsUrl(link.uri));
 }
 
+function extractClassDebugFields(loyaltyClass) {
+  return {
+    issuerName: loyaltyClass.issuerName,
+    programName: loyaltyClass.programName,
+    hexBackgroundColor: loyaltyClass.hexBackgroundColor,
+    programLogoUrl: loyaltyClass?.programLogo?.sourceUri?.uri,
+    heroImageUrl: loyaltyClass?.heroImage?.sourceUri?.uri || null,
+    textModulesCount: Array.isArray(loyaltyClass.textModulesData)
+      ? loyaltyClass.textModulesData.length
+      : 0,
+    linksCount: Array.isArray(loyaltyClass?.linksModuleData?.uris)
+      ? loyaltyClass.linksModuleData.uris.length
+      : 0,
+  };
+}
+
 function buildLoyaltyClassPayload({ classId, customer, template }) {
   const walletGoogle = template?.wallet?.google || {};
   const issuerName =
@@ -274,6 +290,14 @@ export async function ensureLoyaltyClassForMerchant({
     existed = true;
 
     if (forcePatch) {
+      if (googleWalletConfig.isDevEnv) {
+        console.log("GOOGLE_WALLET_CLASS_PATCH_PAYLOAD", {
+          classId,
+          existed,
+          fields: extractClassDebugFields(loyaltyClass),
+        });
+      }
+
       await walletRequest({
         method: "PATCH",
         path: `/walletobjects/v1/loyaltyClass/${classId}`,
@@ -285,6 +309,14 @@ export async function ensureLoyaltyClassForMerchant({
       throw err;
     }
 
+    if (googleWalletConfig.isDevEnv) {
+      console.log("GOOGLE_WALLET_CLASS_CREATE_PAYLOAD", {
+        classId,
+        existed,
+        fields: extractClassDebugFields(loyaltyClass),
+      });
+    }
+
     await walletRequest({
       method: "POST",
       path: "/walletobjects/v1/loyaltyClass",
@@ -292,12 +324,32 @@ export async function ensureLoyaltyClassForMerchant({
     });
   }
 
+  if (googleWalletConfig.isDevEnv) {
+    try {
+      const saved = await walletRequest({
+        method: "GET",
+        path: `/walletobjects/v1/loyaltyClass/${classId}`,
+      });
+
+      console.log("GOOGLE_WALLET_CLASS_SAVED_STATE", {
+        classId,
+        existed,
+        fields: extractClassDebugFields(saved || {}),
+      });
+    } catch (verificationErr) {
+      console.warn("GOOGLE_WALLET_CLASS_VERIFY_FAILED", {
+        classId,
+        error: verificationErr?.message,
+      });
+    }
+  }
+
   await persistClassId(customer, classId);
 
   return { classId, existed };
 }
 
-export async function ensureLoyaltyObjectForCard({ cardId, card }) {
+export async function ensureLoyaltyObjectForCard({ cardId, card, forcePatch = false }) {
   if (!cardId && !card) {
     throw new Error("cardId or card is required");
   }
@@ -309,6 +361,7 @@ export async function ensureLoyaltyObjectForCard({ cardId, card }) {
 
   const { classId } = await ensureLoyaltyClassForMerchant({
     merchantId: cardDoc.merchantId,
+    forcePatch,
   });
 
   const objectId = makeObjectId({
@@ -323,6 +376,17 @@ export async function ensureLoyaltyObjectForCard({ cardId, card }) {
     card: cardDoc,
     redeemCode,
   });
+
+  if (googleWalletConfig.isDevEnv) {
+    const barcodeValue = loyaltyObjectPayload?.barcode?.value || "";
+    console.log("GOOGLE_WALLET_OBJECT_PAYLOAD", {
+      objectId,
+      barcodeType: loyaltyObjectPayload?.barcode?.type || null,
+      barcodeValueLength: barcodeValue.length,
+      loyaltyPoints: loyaltyObjectPayload.loyaltyPoints,
+      secondaryLoyaltyPoints: loyaltyObjectPayload.secondaryLoyaltyPoints,
+    });
+  }
 
   let existed = false;
 
@@ -355,7 +419,7 @@ export async function ensureLoyaltyObjectForCard({ cardId, card }) {
   cardDoc.googleWallet.objectId = objectId;
   await cardDoc.save();
 
-  return { objectId, existed };
+  return { objectId, classId, existed };
 }
 
 export async function ensureLoyaltyObjectForWalletToken({ walletToken }) {
