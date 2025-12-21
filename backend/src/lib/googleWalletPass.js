@@ -16,6 +16,7 @@ const DEFAULT_PRIMARY_COLOR = "#FF9900";
 const DEV_DEFAULT_LOGO_URL =
   "https://storage.googleapis.com/wallet-lab-tools-codelab-artifacts/LoyaltyClass/loyalty_class_logo.png";
 const MAX_TEXT_MODULES = 4;
+const PROMO_MAX_LENGTH = 60;
 const MAX_BARCODE_LENGTH = 120;
 const FALLBACK_IMAGE_URL = "https://www.pluxeo.com/logo.png";
 
@@ -138,6 +139,23 @@ function sanitizeTextModules(textModules) {
     .slice(0, MAX_TEXT_MODULES);
 }
 
+function sanitizePromoText(rawPromoText) {
+  const collapsed = String(rawPromoText ?? "").replace(/\s+/g, " ").trim();
+
+  const promoText = collapsed
+    ? collapsed.length > PROMO_MAX_LENGTH
+      ? `${collapsed.slice(0, PROMO_MAX_LENGTH - 1).trimEnd()}…`
+      : collapsed
+    : "";
+
+  console.log("GW_PROMO", {
+    promoText: promoText || null,
+    promoLen: promoText?.length,
+  });
+
+  return promoText || null;
+}
+
 function sanitizeLinks(links) {
   if (!Array.isArray(links)) return [];
 
@@ -147,6 +165,66 @@ function sanitizeLinks(links) {
       description: (link?.description || "").trim(),
     }))
     .filter((link) => isValidHttpsUrl(link.uri));
+}
+
+function normalizeWebsiteUrl(websiteUrl) {
+  const raw = String(websiteUrl ?? "").trim();
+  if (!raw) return null;
+
+  const prefixed = raw.match(/^https?:\/\//i) ? raw : `https://${raw}`;
+
+  try {
+    const parsed = new URL(prefixed);
+
+    if (parsed.protocol !== "https:") {
+      parsed.protocol = "https:";
+    }
+
+    return parsed.toString();
+  } catch (_err) {
+    return null;
+  }
+}
+
+function buildTemplateTextModulesData(template) {
+  const modules = [];
+  const promoText = sanitizePromoText(template?.promoText);
+  const promoPresent = Boolean(promoText);
+
+  if (promoPresent) {
+    modules.push({ id: "promo", header: "AKCE", body: promoText });
+  }
+
+  const walletGoogle = template?.wallet?.google || {};
+  const sanitizedTemplateModules = sanitizeTextModules(walletGoogle.textModules);
+
+  sanitizedTemplateModules.forEach((module, idx) => {
+    modules.push({ id: `tpl_${idx}`, header: module.header, body: module.body });
+  });
+
+  const detailModules = [];
+  const pushDetailModule = (value, id, header) => {
+    const body = String(value ?? "").trim();
+    if (body) detailModules.push({ id, header, body });
+  };
+
+  pushDetailModule(template?.openingHours, "detail_opening_hours", "Otevírací doba");
+  pushDetailModule(template?.customMessage, "detail_custom_message", "Zpráva");
+
+  const headline = String(template?.headline || "").trim();
+  const subheadline = String(template?.subheadline || "").trim();
+
+  if (headline) detailModules.push({ id: "detail_info_headline", header: "Info", body: headline });
+  if (subheadline)
+    detailModules.push({ id: "detail_info_subheadline", header: "Info", body: subheadline });
+
+  modules.push(...detailModules);
+
+  return {
+    modules,
+    promoPresent,
+    templateTextModuleCount: modules.length,
+  };
 }
 
 function buildTextModuleTemplate(index) {
@@ -160,10 +238,11 @@ function buildTextModuleTemplate(index) {
   };
 }
 
-function buildClassTemplateInfo({ templateTextModuleCount }) {
+function buildClassTemplateInfo({ templateTextModuleCount, promoPresent = false }) {
   const rows = [];
   const dynamicIndexStart = Math.max(0, templateTextModuleCount);
   const dynamicTextRowIndices = [dynamicIndexStart, dynamicIndexStart + 1];
+  const promoIndex = promoPresent ? 0 : null;
 
   rows.push({
     twoItems: {
@@ -182,6 +261,20 @@ function buildClassTemplateInfo({ templateTextModuleCount }) {
     },
   });
 
+  if (promoPresent) {
+    const promoRowEndIndex =
+      templateTextModuleCount > 1 && promoIndex === 0
+        ? 1
+        : dynamicTextRowIndices[0];
+
+    rows.push({
+      twoItems: {
+        startItem: buildTextModuleTemplate(promoIndex),
+        endItem: buildTextModuleTemplate(promoRowEndIndex),
+      },
+    });
+  }
+
   rows.push({
     twoItems: {
       startItem: buildTextModuleTemplate(dynamicTextRowIndices[0]),
@@ -189,8 +282,14 @@ function buildClassTemplateInfo({ templateTextModuleCount }) {
     },
   });
 
-  if (templateTextModuleCount > 0) {
-    const templateIndices = [0, 1].map((idx) =>
+  const contentStartIndex = promoPresent ? 1 : 0;
+  const remainingTemplateCount = Math.max(
+    0,
+    templateTextModuleCount - contentStartIndex
+  );
+
+  if (remainingTemplateCount > 0) {
+    const templateIndices = [contentStartIndex, contentStartIndex + 1].map((idx) =>
       idx < templateTextModuleCount ? idx : dynamicIndexStart
     );
 
@@ -220,14 +319,7 @@ function buildClassTemplateInfo({ templateTextModuleCount }) {
 }
 
 function buildObjectTextModules({ template, card }) {
-  const walletGoogle = template?.wallet?.google || {};
-  const sanitized = sanitizeTextModules(walletGoogle.textModules);
-
-  const templateModules = sanitized.map((module, idx) => ({
-    id: `tpl_${idx}`,
-    header: module.header,
-    body: module.body,
-  }));
+  const templateModulesData = buildTemplateTextModulesData(template);
 
   const dynamicModules = [
     {
@@ -242,17 +334,30 @@ function buildObjectTextModules({ template, card }) {
     },
   ];
 
-  return [...templateModules, ...dynamicModules];
+  return {
+    textModules: [...templateModulesData.modules, ...dynamicModules],
+    templateTextModuleCount: templateModulesData.templateTextModuleCount,
+    promoPresent: templateModulesData.promoPresent,
+  };
 }
 
 function buildObjectLinksModuleData(template) {
   const walletGoogle = template?.wallet?.google || {};
+  const uris = [];
+
+  const normalizedWebsite = normalizeWebsiteUrl(template?.websiteUrl);
+  if (normalizedWebsite) {
+    uris.push({ uri: normalizedWebsite, description: "Web" });
+  }
+
   const linksModuleUris = sanitizeLinks(walletGoogle.links).map((link, idx) => ({
     uri: link.uri,
     description: link.description || `Otevřít odkaz ${idx + 1}`,
   }));
 
-  return linksModuleUris.length > 0 ? { uris: linksModuleUris } : null;
+  uris.push(...linksModuleUris);
+
+  return uris.length > 0 ? { uris } : null;
 }
 
 function extractClassDebugFields(loyaltyClass) {
@@ -297,9 +402,10 @@ async function buildLoyaltyClassPayload({ classId, customer, template }) {
   );
   const isLogoCandidateValid =
     isValidHttpsUrl(logoUrlCandidate) && !containsQuoteCharacters(logoUrlCandidate);
-  const textModulesData = sanitizeTextModules(walletGoogle.textModules);
+  const templateTextModulesData = buildTemplateTextModulesData(template);
   const classTemplateInfo = buildClassTemplateInfo({
-    templateTextModuleCount: textModulesData.length,
+    templateTextModuleCount: templateTextModulesData.templateTextModuleCount,
+    promoPresent: templateTextModulesData.promoPresent,
   });
 
   if (!isLogoCandidateValid && (logoUrlOriginal || logoUrlCandidate)) {
@@ -581,7 +687,10 @@ export async function ensureLoyaltyObjectForCard({
   });
 
   const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
-  const textModulesData = buildObjectTextModules({ template, card: cardDoc });
+  const { textModules } = buildObjectTextModules({
+    template,
+    card: cardDoc,
+  });
   const linksModuleData = buildObjectLinksModuleData(template);
 
   const loyaltyObjectPayload = buildLoyaltyObjectPayload({
@@ -589,7 +698,7 @@ export async function ensureLoyaltyObjectForCard({
     classId,
     card: cardDoc,
     barcodeValue,
-    textModulesData,
+    textModulesData: textModules,
     linksModuleData,
   });
 
@@ -610,7 +719,7 @@ export async function ensureLoyaltyObjectForCard({
       ),
       stamps: cardDoc?.stamps ?? 0,
       rewards: cardDoc?.rewards ?? 0,
-      textModules: textModulesData?.length ?? 0,
+      textModules: textModules?.length ?? 0,
       links: linksModuleData?.uris?.length ?? 0,
     });
   }
