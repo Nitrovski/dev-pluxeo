@@ -1,4 +1,5 @@
 import mongoose from "mongoose";
+import { generateScanCode } from "../lib/scanCode.js";
 
 const { Schema, model } = mongoose;
 
@@ -115,6 +116,12 @@ const CardSchema = new Schema(
       index: true,
     },
 
+    scanCode: {
+      type: String,
+      default: generateScanCode,
+      trim: true,
+    },
+
     // (zatím necháváme — pozdeji mužeme odstranit, protože program je globální)
     templateId: {
       type: Schema.Types.ObjectId,
@@ -190,6 +197,19 @@ CardSchema.index(
  */
 CardSchema.index(
   { merchantId: 1, "redeemCodes.code": 1 }
+);
+
+/**
+ * Stabilní scan kód pro merchant scan
+ */
+CardSchema.index(
+  { scanCode: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      scanCode: { $type: "string" },
+    },
+  }
 );
 
 export const Card = model("Card", CardSchema);

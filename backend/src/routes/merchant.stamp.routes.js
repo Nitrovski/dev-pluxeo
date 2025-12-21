@@ -7,6 +7,7 @@ import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
 import { syncGoogleWalletObject } from "../lib/googleWalletPass.js";
+import { ensureCardHasScanCode } from "../lib/scanCode.js";
 
 function normToken(v) {
   return String(v || "").trim();
@@ -61,6 +62,8 @@ export async function merchantStampRoutes(fastify) {
       // 1) Najdi kartu podle merchantId + walletToken
       const card = await Card.findOne({ merchantId, walletToken: token });
       if (!card) return reply.code(404).send({ error: "card not found" });
+
+      await ensureCardHasScanCode(card);
 
       // 2) anti double-scan guard (server-side pojistka)
       const nowMs = Date.now();

@@ -1,5 +1,6 @@
 // src/lib/redeemCodes.js
 import { buildCardEventPayload } from "./eventSchemas.js";
+import { ensureCardHasScanCode } from "./scanCode.js";
 
 function normCode(v) {
   return typeof v === "string" ? v.trim().toUpperCase() : "";
@@ -169,6 +170,8 @@ export async function redeemByCodeForMerchant({
 
   const card = await Card.findOne(matchLookup);
 
+  await ensureCardHasScanCode(card);
+
   if (!card) {
     return { ok: false, status: 404, error: "Code not found" };
   }
@@ -310,6 +313,8 @@ export async function redeemByCodeForMerchant({
       },
     ],
   });
+
+  await ensureCardHasScanCode(updatedCard);
 
   if (!updatedCard) {
     return logFailure("concurrent_or_inactive", 400, "Invalid, expired, or already redeemed code");
