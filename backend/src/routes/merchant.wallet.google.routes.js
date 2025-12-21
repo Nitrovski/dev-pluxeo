@@ -1,8 +1,10 @@
 import { getAuth } from "@clerk/fastify";
+import { googleWalletConfig } from "../config/googleWallet.config.js";
 import { Card } from "../models/card.model.js";
 import {
   createAddToWalletLinkForCard,
   ensureLoyaltyClassForMerchant,
+  ensureLoyaltyObjectForCard,
 } from "../lib/googleWalletPass.js";
 
 export async function merchantWalletGoogleRoutes(fastify) {
@@ -48,10 +50,58 @@ export async function merchantWalletGoogleRoutes(fastify) {
         forcePatch: true,
       });
 
+      if (googleWalletConfig.isDevEnv && request.log && request.log.info) {
+        request.log.info({ merchantId, classId }, "DEV wallet class sync requested");
+      }
+
       return reply.send({ ok: true, classId });
     } catch (err) {
       request.log?.error?.(err, "sync wallet class failed");
       return reply.code(500).send({ error: err?.message || "Failed to sync class" });
+    }
+  });
+
+  fastify.post("/api/merchant/wallet/google/sync-object", async (request, reply) => {
+    try {
+      const { isAuthenticated, userId } = getAuth(request);
+
+      if (!isAuthenticated || !userId) {
+        return reply.code(401).send({ error: "Missing or invalid token" });
+      }
+
+      const merchantId = userId;
+      const walletToken = String(request.body?.walletToken || "").trim();
+      const cardId = String(request.body?.cardId || "").trim();
+
+      if (!walletToken && !cardId) {
+        return reply.code(400).send({ error: "walletToken or cardId is required" });
+      }
+
+      const cardQuery = walletToken
+        ? { merchantId, walletToken }
+        : { merchantId, _id: cardId };
+
+      const card = await Card.findOne(cardQuery);
+      if (!card) {
+        return reply.code(404).send({ error: "Card not found" });
+      }
+
+      const { objectId, classId } = await ensureLoyaltyObjectForCard({
+        card,
+        forcePatch: true,
+      });
+
+      if (googleWalletConfig.isDevEnv && request.log && request.log.info) {
+        request.log.info(
+          { merchantId, cardId: card._id, objectId, classId },
+          "DEV wallet object sync requested"
+        );
+      }
+
+      return reply.send({ ok: true, objectId, classId });
+    } catch (err) {
+      request.log?.error?.(err, "sync wallet object failed");
+      return reply.code(500).send({ error: err?.message || "Failed to sync object" });
     }
   });
 }
