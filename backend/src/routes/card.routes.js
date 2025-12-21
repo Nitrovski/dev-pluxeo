@@ -8,6 +8,7 @@ import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
 import { normalizeCardContent } from "../utils/normalizeCardContent.js";
 import { pickRedeemForDisplay, issueRedeemCode } from "../lib/redeemCodes.js";
+import { generateScanCode, ensureCardHasScanCode } from "../lib/scanCode.js";
 
 
 
@@ -50,6 +51,7 @@ async function cardRoutes(fastify, options) {
         merchantId,
         customerId,
         walletToken,
+        scanCode: generateScanCode(),
         lastEventAt: new Date(),
       });
 
@@ -237,6 +239,8 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
         return reply.code(404).send({ error: "Card not found" });
       }
 
+      await ensureCardHasScanCode(card);
+
       return reply.send(card);
     } catch (err) {
       request.log.error(err, "Error fetching card");
@@ -261,10 +265,12 @@ fastify.post("/api/cards/:id/redeem/issue", async (request, reply) => {
     try {
       const { id } = request.params;
 
-      const card = await Card.findById(id).lean();
+      const card = await Card.findById(id);
       if (!card) {
         return reply.code(404).send({ error: "Card not found" });
       }
+
+      await ensureCardHasScanCode(card);
 
       const template = await CardTemplate.findOne({
         merchantId: card.merchantId,

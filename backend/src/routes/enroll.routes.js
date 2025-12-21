@@ -4,6 +4,7 @@ import { Card } from "../models/card.model.js";
 import { CardTemplate } from "../models/cardTemplate.model.js";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
+import { generateScanCode, ensureCardHasScanCode } from "../lib/scanCode.js";
 
 function generateWalletToken() {
   return crypto.randomBytes(24).toString("base64url");
@@ -64,6 +65,8 @@ export default async function enrollRoutes(fastify) {
         // 1) idempotence: pokud u karta pro tohle zarízení existuje, vrat ji
         const existing = await Card.findOne({ merchantId: customer.merchantId, clientId });
         if (existing) {
+          await ensureCardHasScanCode(existing);
+
           request.log.info(
             { ip, ua, merchantId: customer.merchantId, clientId, cardId: existing._id },
             "Enroll idempotent hit"
@@ -90,6 +93,7 @@ export default async function enrollRoutes(fastify) {
             customerId: customer.customerId,
             clientId,
             walletToken,
+            scanCode: generateScanCode(),
             stamps: 0,
             rewards: 0,
             notes: "",
@@ -147,6 +151,8 @@ export default async function enrollRoutes(fastify) {
           if (err?.code === 11000) {
             const card = await Card.findOne({ merchantId: customer.merchantId, clientId });
             if (card) {
+              await ensureCardHasScanCode(card);
+
               request.log.info(
                 { ip, ua, merchantId: customer.merchantId, clientId, cardId: card._id },
                 "Enroll race resolved"

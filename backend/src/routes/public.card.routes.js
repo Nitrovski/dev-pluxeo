@@ -1,9 +1,10 @@
 import { Card } from "../models/card.model.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { pickRedeemForDisplay } from "../lib/redeemCodes.js";
+import { ensureCardHasScanCode } from "../lib/scanCode.js";
 
 export async function publicCardRoutes(fastify) {
-  // Public (bez auth) ñ slouûÌ jen k zobrazenÌ webovÈ karty
+  // Public (bez auth) ‚Äì slou≈æ√≠ jen k zobrazen√≠ webov√© karty
   fastify.get("/api/public/card/:walletToken", async (request, reply) => {
     const walletToken = String(request.params.walletToken || "").trim();
     if (!walletToken) return reply.code(400).send({ error: "walletToken is required" });
@@ -11,10 +12,12 @@ export async function publicCardRoutes(fastify) {
     const card = await Card.findOne({ walletToken });
     if (!card) return reply.code(404).send({ error: "card not found" });
 
-    // Tvuj existujÌcÌ public payload (template + stamps/rewards atd.)
+    await ensureCardHasScanCode(card);
+
+    // Tvuj existuj√≠c√≠ public payload (template + stamps/rewards atd.)
     const payload = await buildPublicCardPayload(card._id);
 
-    // QR hodnota: redeem m· prioritu, jinak stamping token
+    // QR hodnota: redeem m√° prioritu, jinak stamping token
     const redeem = pickRedeemForDisplay(card);
     const qrValue = redeem?.code || card.walletToken;
 
