@@ -20,6 +20,17 @@ function isValidHttpsUrl(url) {
   return typeof url === "string" && url.trim().toLowerCase().startsWith("https://");
 }
 
+function sanitizeImageUrl(url) {
+  const original = url ?? "";
+  const sanitized = String(original).trim().replace(/^['"]+|['"]+$/g, "").trim();
+
+  return { original, sanitized };
+}
+
+function containsQuoteCharacters(str) {
+  return str.includes("'") || str.includes('"');
+}
+
 function resolveDefaultLogoUrl() {
   const envLogoUrl = googleWalletConfig.defaultLogoUrl;
 
@@ -96,13 +107,33 @@ function buildLoyaltyClassPayload({ classId, customer, template }) {
     walletGoogle.backgroundColor?.trim() ||
     template?.primaryColor?.trim() ||
     DEFAULT_PRIMARY_COLOR;
-  const logoUrlCandidate = walletGoogle.logoUrl?.trim();
-  const logoUrl = isValidHttpsUrl(logoUrlCandidate)
-    ? logoUrlCandidate
-    : resolveDefaultLogoUrl();
-  const heroImageUrl = walletGoogle.heroImageUrl?.trim();
+  const { original: logoUrlOriginal, sanitized: logoUrlCandidate } =
+    sanitizeImageUrl(walletGoogle.logoUrl);
+  const isLogoValid =
+    isValidHttpsUrl(logoUrlCandidate) && !containsQuoteCharacters(logoUrlCandidate);
+  const logoUrl = isLogoValid ? logoUrlCandidate : resolveDefaultLogoUrl();
+  const { original: heroImageOriginal, sanitized: heroImageCandidate } =
+    sanitizeImageUrl(walletGoogle.heroImageUrl);
+  const isHeroImageValid =
+    isValidHttpsUrl(heroImageCandidate) && !containsQuoteCharacters(heroImageCandidate);
   const textModulesData = sanitizeTextModules(walletGoogle.textModules);
   const linksModuleUris = sanitizeLinks(walletGoogle.links);
+
+  if (!isLogoValid && (logoUrlOriginal || logoUrlCandidate)) {
+    console.warn("GW_IMAGE_SANITIZED", {
+      field: "logoUrl",
+      original: logoUrlOriginal,
+      sanitized: logoUrlCandidate,
+    });
+  }
+
+  if (!isHeroImageValid && (heroImageOriginal || heroImageCandidate)) {
+    console.warn("GW_IMAGE_SANITIZED", {
+      field: "heroImageUrl",
+      original: heroImageOriginal,
+      sanitized: heroImageCandidate,
+    });
+  }
 
   const payload = {
     id: classId,
@@ -124,9 +155,9 @@ function buildLoyaltyClassPayload({ classId, customer, template }) {
           ],
   };
 
-  if (isValidHttpsUrl(heroImageUrl)) {
+  if (isHeroImageValid) {
     payload.heroImage = {
-      sourceUri: { uri: heroImageUrl },
+      sourceUri: { uri: heroImageCandidate },
     };
   }
 
