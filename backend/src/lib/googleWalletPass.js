@@ -15,11 +15,15 @@ const DEFAULT_PROGRAM_NAME = "Pluxeo";
 const DEFAULT_PRIMARY_COLOR = "#FF9900";
 const DEV_DEFAULT_LOGO_URL =
   "https://storage.googleapis.com/wallet-lab-tools-codelab-artifacts/LoyaltyClass/loyalty_class_logo.png";
-const DEFAULT_HEADLINE = "Věrnostní program";
-const DEFAULT_SUBHEADLINE = "Sbírejte body a odměny s Pluxeo.";
 const MAX_TEXT_MODULES = 4;
 const MAX_BARCODE_LENGTH = 120;
 const FALLBACK_IMAGE_URL = "https://www.pluxeo.com/logo.png";
+
+function normBarcodeValue(v) {
+  return String(v ?? "")
+    .trim()
+    .replace(/[\r\n\t ]+/g, "");
+}
 
 function isValidHttpsUrl(url) {
   return typeof url === "string" && url.trim().toLowerCase().startsWith("https://");
@@ -145,6 +149,76 @@ function sanitizeLinks(links) {
     .filter((link) => isValidHttpsUrl(link.uri));
 }
 
+function buildTextModuleTemplate(index) {
+  return {
+    firstValue: {
+      fields: [{ fieldPath: `object.textModulesData[${index}].header` }],
+    },
+    secondValue: {
+      fields: [{ fieldPath: `object.textModulesData[${index}].body` }],
+    },
+  };
+}
+
+function buildClassTemplateInfo({ templateTextModuleCount }) {
+  const rows = [];
+  const dynamicIndexStart = Math.max(0, templateTextModuleCount);
+  const dynamicTextRowIndices = [dynamicIndexStart, dynamicIndexStart + 1];
+
+  rows.push({
+    twoItems: {
+      startItem: {
+        firstValue: { fields: [{ fieldPath: "object.loyaltyPoints.label" }] },
+        secondValue: { fields: [{ fieldPath: "object.loyaltyPoints.balance" }] },
+      },
+      endItem: {
+        firstValue: {
+          fields: [{ fieldPath: "object.secondaryLoyaltyPoints.label" }],
+        },
+        secondValue: {
+          fields: [{ fieldPath: "object.secondaryLoyaltyPoints.balance" }],
+        },
+      },
+    },
+  });
+
+  rows.push({
+    twoItems: {
+      startItem: buildTextModuleTemplate(dynamicTextRowIndices[0]),
+      endItem: buildTextModuleTemplate(dynamicTextRowIndices[1]),
+    },
+  });
+
+  if (templateTextModuleCount > 0) {
+    const templateIndices = [0, 1].map((idx) =>
+      idx < templateTextModuleCount ? idx : dynamicIndexStart
+    );
+
+    rows.push({
+      twoItems: {
+        startItem: buildTextModuleTemplate(templateIndices[0]),
+        endItem: buildTextModuleTemplate(templateIndices[1]),
+      },
+    });
+  }
+
+  return {
+    cardTemplateOverride: {
+      cardBarcodeSectionDetails: {
+        renderedBarcodes: [
+          {
+            templateItem: {
+              firstValue: { fields: [{ fieldPath: "object.barcode" }] },
+            },
+            showCodeText: true,
+          },
+        ],
+      },
+      cardRowTemplateInfos: rows,
+    },
+  };
+}
+
 function buildObjectTextModules({ template, card }) {
   const walletGoogle = template?.wallet?.google || {};
   const sanitized = sanitizeTextModules(walletGoogle.textModules);
@@ -182,18 +256,24 @@ function buildObjectLinksModuleData(template) {
 }
 
 function extractClassDebugFields(loyaltyClass) {
+  const templateOverride = loyaltyClass?.classTemplateInfo?.cardTemplateOverride;
+  const rowCount = Array.isArray(templateOverride?.cardRowTemplateInfos)
+    ? templateOverride.cardRowTemplateInfos.length
+    : 0;
+  const renderedBarcodeCount = Array.isArray(
+    templateOverride?.cardBarcodeSectionDetails?.renderedBarcodes
+  )
+    ? templateOverride.cardBarcodeSectionDetails.renderedBarcodes.length
+    : 0;
+
   return {
     issuerName: loyaltyClass.issuerName,
     programName: loyaltyClass.programName,
     hexBackgroundColor: loyaltyClass.hexBackgroundColor,
     programLogoUrl: loyaltyClass?.programLogo?.sourceUri?.uri,
     heroImageUrl: loyaltyClass?.heroImage?.sourceUri?.uri || null,
-    textModulesCount: Array.isArray(loyaltyClass.textModulesData)
-      ? loyaltyClass.textModulesData.length
-      : 0,
-    linksCount: Array.isArray(loyaltyClass?.linksModuleData?.uris)
-      ? loyaltyClass.linksModuleData.uris.length
-      : 0,
+    templateRows: rowCount,
+    renderedBarcodes: renderedBarcodeCount,
   };
 }
 
@@ -218,7 +298,9 @@ async function buildLoyaltyClassPayload({ classId, customer, template }) {
   const isLogoCandidateValid =
     isValidHttpsUrl(logoUrlCandidate) && !containsQuoteCharacters(logoUrlCandidate);
   const textModulesData = sanitizeTextModules(walletGoogle.textModules);
-  const linksModuleUris = sanitizeLinks(walletGoogle.links);
+  const classTemplateInfo = buildClassTemplateInfo({
+    templateTextModuleCount: textModulesData.length,
+  });
 
   if (!isLogoCandidateValid && (logoUrlOriginal || logoUrlCandidate)) {
     console.warn("GW_IMAGE_SANITIZED", {
@@ -250,26 +332,12 @@ async function buildLoyaltyClassPayload({ classId, customer, template }) {
       sourceUri: { uri: logoUrl },
     },
     hexBackgroundColor: primaryColor,
-    textModulesData:
-      textModulesData.length > 0
-        ? textModulesData
-        : [
-            {
-              header: DEFAULT_HEADLINE,
-              body: DEFAULT_SUBHEADLINE,
-            },
-          ],
+    classTemplateInfo,
   };
 
   if (heroImageUrl) {
     payload.heroImage = {
       sourceUri: { uri: heroImageUrl },
-    };
-  }
-
-  if (linksModuleUris.length > 0) {
-    payload.linksModuleData = {
-      uris: linksModuleUris,
     };
   }
 
@@ -294,13 +362,13 @@ function persistClassId(customer, classId) {
 
 async function resolveLoyaltyObjectBarcode({ card, cardId }) {
   const publicPayload = await buildPublicCardPayload(cardId);
-  const redeemCodeValue = (publicPayload?.redeemCode?.code || "").trim();
+  const redeemCodeValue = normBarcodeValue(publicPayload?.redeemCode?.code);
 
   if (redeemCodeValue) {
     return redeemCodeValue.slice(0, MAX_BARCODE_LENGTH);
   }
 
-  const scanCode = String(card?.scanCode || "").trim();
+  const scanCode = normBarcodeValue(card?.scanCode);
   return scanCode ? scanCode.slice(0, MAX_BARCODE_LENGTH) : "";
 }
 
@@ -312,6 +380,11 @@ function buildLoyaltyObjectPayload({
   textModulesData,
   linksModuleData,
 }) {
+  const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(
+    0,
+    MAX_BARCODE_LENGTH
+  );
+
   const payload = {
     id: objectId,
     classId,
@@ -328,10 +401,11 @@ function buildLoyaltyObjectPayload({
     },
   };
 
-  if (barcodeValue) {
+  if (normalizedBarcodeValue) {
     payload.barcode = {
       type: "QR_CODE",
-      value: barcodeValue,
+      value: normalizedBarcodeValue,
+      alternateText: "Pluxeo",
     };
   }
 
@@ -518,6 +592,9 @@ export async function ensureLoyaltyObjectForCard({
       objectId,
       barcodeType: loyaltyObjectPayload?.barcode?.type || null,
       barcodeValueLength,
+      barcodeValueJson: JSON.stringify(
+        loyaltyObjectPayload?.barcode?.value ?? ""
+      ),
       stamps: cardDoc?.stamps ?? 0,
       rewards: cardDoc?.rewards ?? 0,
       textModules: textModulesData?.length ?? 0,

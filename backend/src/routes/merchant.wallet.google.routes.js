@@ -38,6 +38,81 @@ export async function merchantWalletGoogleRoutes(fastify) {
     }
   );
 
+  fastify.get("/api/merchant/wallet/google/debug", async (request, reply) => {
+    try {
+      const { isAuthenticated, userId } = getAuth(request);
+
+      if (!isAuthenticated || !userId) {
+        return reply.code(401).send({ error: "Missing or invalid token" });
+      }
+
+      if (!googleWalletConfig.isDevEnv) {
+        return reply.code(403).send({ error: "Not available in production" });
+      }
+
+      const merchantId = userId;
+      const walletToken = String(request.query?.walletToken || "").trim();
+      const cardId = String(request.query?.cardId || "").trim();
+
+      if (!walletToken && !cardId) {
+        return reply
+          .code(400)
+          .send({ error: "walletToken or cardId is required" });
+      }
+
+      const cardQuery = walletToken
+        ? { merchantId, walletToken }
+        : { merchantId, _id: cardId };
+
+      const card = await Card.findOne(cardQuery);
+      if (!card) {
+        return reply.code(404).send({ error: "Card not found" });
+      }
+
+      const classId = makeClassId({
+        issuerId: googleWalletConfig.issuerId,
+        classPrefix: googleWalletConfig.classPrefix,
+        merchantId,
+      });
+
+      const objectId =
+        card.googleWallet?.objectId ||
+        makeObjectId({ issuerId: googleWalletConfig.issuerId, cardId: card._id });
+
+      const [classData, objectData] = await Promise.all([
+        walletRequest({
+          method: "GET",
+          path: `/walletobjects/v1/loyaltyClass/${classId}`,
+        }),
+        walletRequest({
+          method: "GET",
+          path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+        }),
+      ]);
+
+      return reply.send({
+        class: {
+          id: classId,
+          issuerName: classData?.issuerName ?? null,
+          programName: classData?.programName ?? null,
+          classTemplateInfo: classData?.classTemplateInfo ?? null,
+        },
+        object: {
+          id: objectId,
+          barcode: objectData?.barcode ?? null,
+          textModulesData: objectData?.textModulesData ?? [],
+          linksModuleData: objectData?.linksModuleData ?? null,
+        },
+      });
+    } catch (err) {
+      request.log?.error?.(err, "fetch wallet debug failed");
+      const statusCode = err?.status || 500;
+      const errorBody =
+        err?.responseBody || err?.message || "Failed to fetch wallet debug info";
+      return reply.code(statusCode).send({ error: errorBody });
+    }
+  });
+
   fastify.get("/api/merchant/wallet/google/debug/class", async (request, reply) => {
     try {
       const { isAuthenticated, userId } = getAuth(request);
