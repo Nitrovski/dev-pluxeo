@@ -14,6 +14,7 @@ const DEV_DEFAULT_LOGO_URL =
 const DEFAULT_HEADLINE = "Věrnostní program";
 const DEFAULT_SUBHEADLINE = "Sbírejte body a odměny s Pluxeo.";
 const MAX_TEXT_MODULES = 4;
+const MAX_BARCODE_LENGTH = 120;
 
 function isValidHttpsUrl(url) {
   return typeof url === "string" && url.trim().toLowerCase().startsWith("https://");
@@ -151,6 +152,46 @@ function buildLoyaltyObjectPayload({ objectId, classId, card, redeemCode }) {
   const headline =
     (card?.rewards || 0) > 0 ? "Odměna dostupná ✅" : "Sbírej razítka";
 
+  const activeCodes = (card?.redeemCodes || []).filter(
+    ({ status }) => status === "active"
+  );
+  const rewardCode =
+    redeemCode?.purpose === "reward"
+      ? redeemCode
+      : activeCodes.find(({ purpose }) => purpose === "reward");
+  const couponCode =
+    redeemCode?.purpose === "coupon"
+      ? redeemCode
+      : activeCodes.find(({ purpose }) => purpose === "coupon");
+
+  const barcodeCandidates = [rewardCode, couponCode].filter(Boolean);
+
+  let barcodeValue = "";
+  let barcodeAlternateText;
+
+  for (const candidate of barcodeCandidates) {
+    const candidateValue = (candidate?.code || "").trim();
+    if (candidateValue && candidateValue.length <= MAX_BARCODE_LENGTH) {
+      barcodeValue = candidateValue;
+      barcodeAlternateText =
+        candidate.purpose === "reward"
+          ? "Odměna k uplatnění"
+          : "Kupón k uplatnění";
+      break;
+    }
+  }
+
+  if (!barcodeValue) {
+    const walletToken = (card?.walletToken || "").trim();
+    if (walletToken) {
+      barcodeValue =
+        walletToken.length <= MAX_BARCODE_LENGTH
+          ? walletToken
+          : walletToken.slice(0, MAX_BARCODE_LENGTH);
+      barcodeAlternateText = "Pluxeo karta";
+    }
+  }
+
   const basePayload = {
     id: objectId,
     classId,
@@ -160,6 +201,10 @@ function buildLoyaltyObjectPayload({ objectId, classId, card, redeemCode }) {
     loyaltyPoints: {
       label: "Razítka",
       balance: { int: card?.stamps ?? 0 },
+    },
+    secondaryLoyaltyPoints: {
+      label: "Odměny",
+      balance: { int: card?.rewards ?? 0 },
     },
     infoModuleData: {
       labelValueRows: [
@@ -179,12 +224,11 @@ function buildLoyaltyObjectPayload({ objectId, classId, card, redeemCode }) {
     ],
   };
 
-  if (redeemCode?.code) {
+  if (barcodeValue) {
     basePayload.barcode = {
       type: "QR_CODE",
-      value: redeemCode.code,
-      alternateText:
-        redeemCode.purpose === "coupon" ? "Kupón k uplatnění" : "Odměna k uplatnění",
+      value: barcodeValue,
+      ...(barcodeAlternateText ? { alternateText: barcodeAlternateText } : {}),
     };
   }
 
