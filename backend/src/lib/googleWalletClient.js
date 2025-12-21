@@ -26,6 +26,8 @@ export async function walletRequest({ method, path, body }) {
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
   const url = `${WALLET_BASE_URL}${normalizedPath}`;
 
+  console.log("GW_API_REQUEST", { method, path: normalizedPath });
+
   const authHeaders = await authClient.getRequestHeaders();
   const headers = {
     ...authHeaders,

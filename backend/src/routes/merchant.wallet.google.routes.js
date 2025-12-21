@@ -137,7 +137,16 @@ export async function merchantWalletGoogleRoutes(fastify) {
         path: `/walletobjects/v1/loyaltyClass/${classId}`,
       });
 
-      return reply.send({ classId, data });
+      return reply.send({
+        class: {
+          id: classId,
+          classTemplateInfo: data?.classTemplateInfo ?? null,
+          programLogoUrl: data?.programLogo?.sourceUri?.uri ?? null,
+          heroImageUrl: data?.heroImage?.sourceUri?.uri ?? null,
+          issuerName: data?.issuerName ?? null,
+          programName: data?.programName ?? null,
+        },
+      });
     } catch (err) {
       request.log?.error?.(err, "fetch wallet class failed");
       const statusCode = err?.status || 500;
@@ -159,32 +168,42 @@ export async function merchantWalletGoogleRoutes(fastify) {
       }
 
       const merchantId = userId;
-      const walletToken = String(request.query?.walletToken || "").trim();
       const cardId = String(request.query?.cardId || "").trim();
 
-      if (!walletToken && !cardId) {
-        return reply.code(400).send({ error: "walletToken or cardId is required" });
+      if (!cardId) {
+        return reply.code(400).send({ error: "cardId is required" });
       }
 
-      const cardQuery = walletToken
-        ? { merchantId, walletToken }
-        : { merchantId, _id: cardId };
-
-      const card = await Card.findOne(cardQuery);
+      const card = await Card.findOne({ merchantId, _id: cardId });
       if (!card) {
         return reply.code(404).send({ error: "Card not found" });
       }
 
-      const objectId =
-        card.googleWallet?.objectId ||
-        makeObjectId({ issuerId: googleWalletConfig.issuerId, cardId: card._id });
+      const classId = makeClassId({
+        issuerId: googleWalletConfig.issuerId,
+        classPrefix: googleWalletConfig.classPrefix,
+        merchantId,
+      });
+
+      const objectId = makeObjectId({
+        issuerId: googleWalletConfig.issuerId,
+        cardId: card._id,
+      });
 
       const data = await walletRequest({
         method: "GET",
         path: `/walletobjects/v1/loyaltyObject/${objectId}`,
       });
 
-      return reply.send({ objectId, data });
+      return reply.send({
+        object: {
+          id: objectId,
+          classId,
+          barcode: data?.barcode ?? null,
+          textModulesData: data?.textModulesData ?? [],
+          linksModuleData: data?.linksModuleData ?? null,
+        },
+      });
     } catch (err) {
       request.log?.error?.(err, "fetch wallet object failed");
       const statusCode = err?.status || 500;
@@ -291,7 +310,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
         );
       }
 
-      return reply.send({ ok: true, objectId, classId });
+      return reply.send({ ok: true, objectId });
     } catch (err) {
       request.log?.error?.(err, "sync wallet object failed");
       if (trySendGoogleWalletBadRequest(reply, err)) return;

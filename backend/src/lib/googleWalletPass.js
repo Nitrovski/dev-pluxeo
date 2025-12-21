@@ -449,6 +449,13 @@ export async function ensureLoyaltyClassForMerchant({
     template: templateDoc,
   });
 
+  console.log("GW_CLASS_UPSERT", {
+    classId,
+    hasTemplateInfo: Boolean(
+      loyaltyClass.classTemplateInfo || loyaltyClass.cardTemplateInfo
+    ),
+  });
+
   let existed = false;
 
   const handleWalletError = (err) => {
@@ -586,6 +593,12 @@ export async function ensureLoyaltyObjectForCard({
     linksModuleData,
   });
 
+  console.log("GW_OBJECT_UPSERT", {
+    objectId,
+    classId,
+    barcodeValue: JSON.stringify(loyaltyObjectPayload?.barcode?.value),
+  });
+
   if (googleWalletConfig.isDevEnv) {
     const barcodeValueLength = loyaltyObjectPayload?.barcode?.value?.length || 0;
     console.log("GOOGLE_WALLET_OBJECT_PAYLOAD", {
@@ -617,6 +630,7 @@ export async function ensureLoyaltyObjectForCard({
       path: `/walletobjects/v1/loyaltyObject/${objectId}`,
       body: loyaltyObjectPayload,
     });
+    console.log("GW_OBJECT_UPSERT_OK", { objectId });
   } catch (err) {
     if (err?.status !== 404) {
       throw err;
@@ -627,6 +641,7 @@ export async function ensureLoyaltyObjectForCard({
       path: "/walletobjects/v1/loyaltyObject",
       body: loyaltyObjectPayload,
     });
+    console.log("GW_OBJECT_UPSERT_OK", { objectId });
   }
 
   cardDoc.googleWallet = cardDoc.googleWallet || {};
