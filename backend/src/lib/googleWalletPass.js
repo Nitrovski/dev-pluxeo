@@ -19,6 +19,7 @@ const DEFAULT_HEADLINE = "Věrnostní program";
 const DEFAULT_SUBHEADLINE = "Sbírejte body a odměny s Pluxeo.";
 const MAX_TEXT_MODULES = 4;
 const MAX_BARCODE_LENGTH = 120;
+const FALLBACK_IMAGE_URL = "https://www.pluxeo.com/logo.png";
 
 function isValidHttpsUrl(url) {
   return typeof url === "string" && url.trim().toLowerCase().startsWith("https://");
@@ -29,6 +30,67 @@ function sanitizeImageUrl(url) {
   const sanitized = String(original).trim().replace(/^['"]+|['"]+$/g, "").trim();
 
   return { original, sanitized };
+}
+
+function normalizePluxeoHostname(url) {
+  try {
+    const parsed = new URL(url);
+
+    if (parsed.hostname === "pluxeo.com") {
+      parsed.hostname = "www.pluxeo.com";
+    }
+
+    return parsed.toString();
+  } catch (_err) {
+    return url;
+  }
+}
+
+function normalizeImageUrl(url) {
+  const { original, sanitized } = sanitizeImageUrl(url);
+  const normalized = normalizePluxeoHostname(sanitized);
+
+  return { original, normalized };
+}
+
+async function validateImageUrlOrFallback(url) {
+  const normalized = normalizePluxeoHostname(url);
+  const isCandidateValid =
+    isValidHttpsUrl(normalized) && !containsQuoteCharacters(normalized);
+
+  const candidate = isCandidateValid ? normalized : FALLBACK_IMAGE_URL;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  const isImageResponse = (response) => {
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    return response.ok && contentType.startsWith("image/");
+  };
+
+  try {
+    let response = await fetch(candidate, {
+      method: "HEAD",
+      signal: controller.signal,
+    });
+
+    if (!isImageResponse(response)) {
+      response = await fetch(candidate, {
+        method: "GET",
+        headers: { Range: "bytes=0-0" },
+        signal: controller.signal,
+      });
+    }
+
+    if (isImageResponse(response)) {
+      return candidate;
+    }
+  } catch (_err) {
+    // Best-effort validation: fall through to fallback on any errors (including timeouts).
+  } finally {
+    clearTimeout(timeout);
+  }
+
+  return FALLBACK_IMAGE_URL;
 }
 
 function containsQuoteCharacters(str) {
@@ -135,7 +197,7 @@ function extractClassDebugFields(loyaltyClass) {
   };
 }
 
-function buildLoyaltyClassPayload({ classId, customer, template }) {
+async function buildLoyaltyClassPayload({ classId, customer, template }) {
   const walletGoogle = template?.wallet?.google || {};
   const issuerName =
     (walletGoogle.issuerName || customer?.name || "").trim() ||
@@ -147,19 +209,18 @@ function buildLoyaltyClassPayload({ classId, customer, template }) {
     walletGoogle.backgroundColor?.trim() ||
     template?.primaryColor?.trim() ||
     DEFAULT_PRIMARY_COLOR;
-  const { original: logoUrlOriginal, sanitized: logoUrlCandidate } =
-    sanitizeImageUrl(walletGoogle.logoUrl);
-  const isLogoValid =
+  const { original: logoUrlOriginal, normalized: logoUrlCandidate } = normalizeImageUrl(
+    walletGoogle.logoUrl
+  );
+  const { original: heroImageOriginal, normalized: heroImageCandidate } = normalizeImageUrl(
+    walletGoogle.heroImageUrl
+  );
+  const isLogoCandidateValid =
     isValidHttpsUrl(logoUrlCandidate) && !containsQuoteCharacters(logoUrlCandidate);
-  const logoUrl = isLogoValid ? logoUrlCandidate : resolveDefaultLogoUrl();
-  const { original: heroImageOriginal, sanitized: heroImageCandidate } =
-    sanitizeImageUrl(walletGoogle.heroImageUrl);
-  const isHeroImageValid =
-    isValidHttpsUrl(heroImageCandidate) && !containsQuoteCharacters(heroImageCandidate);
   const textModulesData = sanitizeTextModules(walletGoogle.textModules);
   const linksModuleUris = sanitizeLinks(walletGoogle.links);
 
-  if (!isLogoValid && (logoUrlOriginal || logoUrlCandidate)) {
+  if (!isLogoCandidateValid && (logoUrlOriginal || logoUrlCandidate)) {
     console.warn("GW_IMAGE_SANITIZED", {
       field: "logoUrl",
       original: logoUrlOriginal,
@@ -167,13 +228,18 @@ function buildLoyaltyClassPayload({ classId, customer, template }) {
     });
   }
 
-  if (!isHeroImageValid && (heroImageOriginal || heroImageCandidate)) {
+  if (heroImageOriginal || heroImageCandidate) {
     console.warn("GW_IMAGE_SANITIZED", {
       field: "heroImageUrl",
       original: heroImageOriginal,
       sanitized: heroImageCandidate,
     });
   }
+
+  const logoUrl = await validateImageUrlOrFallback(
+    isLogoCandidateValid ? logoUrlCandidate : resolveDefaultLogoUrl()
+  );
+  const heroImageUrl = await validateImageUrlOrFallback(heroImageCandidate);
 
   const payload = {
     id: classId,
@@ -195,9 +261,9 @@ function buildLoyaltyClassPayload({ classId, customer, template }) {
           ],
   };
 
-  if (isHeroImageValid) {
+  if (heroImageUrl) {
     payload.heroImage = {
-      sourceUri: { uri: heroImageCandidate },
+      sourceUri: { uri: heroImageUrl },
     };
   }
 
@@ -303,7 +369,7 @@ export async function ensureLoyaltyClassForMerchant({
     merchantId,
   });
 
-  const loyaltyClass = buildLoyaltyClassPayload({
+  const loyaltyClass = await buildLoyaltyClassPayload({
     classId,
     customer,
     template: templateDoc,
