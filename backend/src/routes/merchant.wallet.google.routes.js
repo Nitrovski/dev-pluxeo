@@ -6,8 +6,21 @@ import {
   ensureLoyaltyClassForMerchant,
   ensureLoyaltyObjectForCard,
 } from "../lib/googleWalletPass.js";
-import { walletRequest } from "../lib/googleWalletClient.js";
+import {
+  buildGoogleWalletErrorResponse,
+  isGoogleWalletBadRequest,
+  walletRequest,
+} from "../lib/googleWalletClient.js";
 import { makeClassId, makeObjectId } from "../lib/googleWalletIds.js";
+
+function trySendGoogleWalletBadRequest(reply, err) {
+  if (!isGoogleWalletBadRequest(err)) return false;
+
+  const errorPayload = buildGoogleWalletErrorResponse(err);
+  reply.code(400).send(errorPayload);
+
+  return true;
+}
 
 export async function merchantWalletGoogleRoutes(fastify) {
   fastify.addContentTypeParser(
@@ -128,6 +141,8 @@ export async function merchantWalletGoogleRoutes(fastify) {
       return reply.send({ url, classId, objectId });
     } catch (err) {
       request.log?.error?.(err, "create add to wallet link failed");
+      if (trySendGoogleWalletBadRequest(reply, err)) return;
+
       return reply.code(500).send({ error: err?.message || "Failed to create link" });
     }
   });
@@ -162,6 +177,8 @@ export async function merchantWalletGoogleRoutes(fastify) {
       return reply.send({ ok: true, classId });
     } catch (err) {
       request.log?.error?.(err, "sync wallet class failed");
+      if (trySendGoogleWalletBadRequest(reply, err)) return;
+
       return reply.code(500).send({ error: err?.message || "Failed to sync class" });
     }
   });
@@ -206,6 +223,8 @@ export async function merchantWalletGoogleRoutes(fastify) {
       return reply.send({ ok: true, objectId, classId });
     } catch (err) {
       request.log?.error?.(err, "sync wallet object failed");
+      if (trySendGoogleWalletBadRequest(reply, err)) return;
+
       return reply.code(500).send({ error: err?.message || "Failed to sync object" });
     }
   });

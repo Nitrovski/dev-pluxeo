@@ -4,8 +4,21 @@ import {
   ensureLoyaltyClassForMerchant,
   ensureLoyaltyObjectForCard,
 } from "../lib/googleWalletPass.js";
-import { walletRequest } from "../lib/googleWalletClient.js";
+import {
+  buildGoogleWalletErrorResponse,
+  isGoogleWalletBadRequest,
+  walletRequest,
+} from "../lib/googleWalletClient.js";
 import { googleWalletConfig } from "../config/googleWallet.config.js";
+
+function trySendGoogleWalletBadRequest(reply, err) {
+  if (!isGoogleWalletBadRequest(err)) return false;
+
+  const errorPayload = buildGoogleWalletErrorResponse(err);
+  reply.code(400).send(errorPayload);
+
+  return true;
+}
 
 export async function publicGoogleWalletRoutes(fastify) {
   // DEV/TEST: public Add-to-Google-Wallet by walletToken
@@ -64,6 +77,8 @@ export async function publicGoogleWalletRoutes(fastify) {
         { err, walletToken, cardId: card?._id },
         "create public add to wallet link failed"
       );
+      if (trySendGoogleWalletBadRequest(reply, err)) return;
+
       return reply.code(500).send({ error: "Google Wallet error" });
     }
   });

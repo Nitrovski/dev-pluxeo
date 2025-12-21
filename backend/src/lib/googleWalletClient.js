@@ -55,8 +55,29 @@ export async function walletRequest({ method, path, body }) {
     );
     error.status = response.status;
     error.responseBody = parsedResponseBody;
+    error.rawResponseBody = rawResponseBody;
     throw error;
   }
 
   return parsedResponseBody;
+}
+
+export function isGoogleWalletBadRequest(err) {
+  return err?.status === 400 && Boolean(err?.responseBody);
+}
+
+export function buildGoogleWalletErrorResponse(err) {
+  const responseBody = err?.responseBody;
+  const message =
+    responseBody?.error?.message ||
+    err?.message ||
+    "Google Wallet API request failed";
+
+  return {
+    ok: false,
+    provider: "google",
+    message,
+    errors: responseBody?.error?.errors,
+    raw: responseBody,
+  };
 }
