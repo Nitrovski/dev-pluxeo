@@ -136,6 +136,14 @@ export async function merchantWalletGoogleRoutes(fastify) {
     try {
       const { isAuthenticated, userId } = getAuth(request);
 
+      if (googleWalletConfig.isDevEnv && request.log?.info) {
+        const authHeaderPresent = Boolean(request.headers?.authorization);
+        request.log.info(
+          { authHeaderPresent, isAuthenticated },
+          "DEV wallet class sync auth debug"
+        );
+      }
+
       if (!isAuthenticated || !userId) {
         return reply.code(401).send({ error: "Missing or invalid token" });
       }
