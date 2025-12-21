@@ -94,7 +94,11 @@ async function recordScanEvent(
 
 async function syncWalletForCard(cardId, request) {
   try {
-    await ensureLoyaltyObjectForCard({ cardId });
+    const merchantId = getAuth(request)?.userId;
+
+    if (!merchantId) return;
+
+    await ensureLoyaltyObjectForCard({ merchantId, cardId });
   } catch (err) {
     request?.log?.warn?.({ err, cardId }, "google wallet ensure failed");
   }
