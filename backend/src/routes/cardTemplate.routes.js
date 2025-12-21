@@ -159,19 +159,11 @@ async function cardTemplateRoutes(fastify, options) {
 
       const merchantId = userId;
       const payload = request.body || {};
-      const syncWalletObjects =
-        request.query?.syncWalletObjects === "1" ||
-        request.query?.syncWalletObjects === "true";
+      const syncWalletObjects = true;
 
-      const syncWalletObjectsLimit = Math.min(
-        200,
-        Math.max(1, pickNumber(request.query?.syncWalletObjectsLimit, 50) || 50)
-      );
+      const syncWalletObjectsLimit = 10;
 
-      const syncWalletObjectsConcurrency = Math.min(
-        5,
-        Math.max(1, pickNumber(request.query?.syncWalletObjectsConcurrency, 3) || 3)
-      );
+      const syncWalletObjectsConcurrency = 3;
 
       // whitelist presne podle FE tvaru
       const update = {
@@ -311,10 +303,7 @@ async function cardTemplateRoutes(fastify, options) {
 
       if (syncWalletObjects) {
         try {
-          const cardsToSync = await Card.find({
-            merchantId,
-            "googleWallet.objectId": { $exists: true, $ne: null },
-          })
+          const cardsToSync = await Card.find({ merchantId })
             .sort({ updatedAt: -1 })
             .limit(syncWalletObjectsLimit)
             .select({ _id: 1 })
