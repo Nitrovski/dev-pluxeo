@@ -11,7 +11,7 @@ const CardTemplateSchema = new Schema(
       unique: true,
     },
 
-    // ? jediný prepínac programu
+    // ? jedin prepnac programu
     programType: {
       type: String,
       enum: ["stamps", "coupon", "info"],
@@ -20,7 +20,7 @@ const CardTemplateSchema = new Schema(
     },
 
     /**
-     * Texty / obsah karty (globální)
+     * Texty / obsah karty (globln)
      */
     programName: { type: String, default: "" },
     headline: { type: String, default: "" },
@@ -44,7 +44,7 @@ const CardTemplateSchema = new Schema(
         },
       },
 
-      // ? kupon text jako “rule”
+      // ? kupon text jako rule
       couponText: { type: String, default: "" },
 
       redeemFormat: {
@@ -59,18 +59,41 @@ const CardTemplateSchema = new Schema(
         default: "code128",
       },
 
-      // zatím mužeš nechat do budoucna (nevadí)
+      // zatm mue nechat do budoucna (nevad)
       couponValue: { type: Number },
       couponType: { type: String, enum: ["percentage", "fixed"] },
       couponExpiresInDays: { type: Number },
     },
 
     /**
-     * Styl / vzhled (zustává jen barvy + logo)
+     * Styl / vzhled (zustv jen barvy + logo)
      */
     primaryColor: { type: String, default: "#FF9900" },
     secondaryColor: { type: String, default: "#111827" },
     logoUrl: { type: String, default: "" },
+
+    wallet: {
+      google: {
+        enabled: { type: Boolean, default: false },
+        issuerName: { type: String, default: "" },
+        programName: { type: String, default: "" },
+        logoUrl: { type: String, default: "" },
+        backgroundColor: { type: String, default: "" },
+        heroImageUrl: { type: String, default: "" },
+        links: [
+          {
+            uri: { type: String, default: "" },
+            description: { type: String, default: "" },
+          },
+        ],
+        textModules: [
+          {
+            header: { type: String, default: "" },
+            body: { type: String, default: "" },
+          },
+        ],
+      },
+    },
   },
   { timestamps: true }
 );

@@ -1,5 +1,6 @@
 import { CardTemplate } from "../models/cardTemplate.model.js";
 import { getAuth } from "@clerk/fastify";
+import { ensureLoyaltyClassForMerchant } from "../lib/googleWalletPass.js";
 
 function pickString(v, fallback = "") {
   if (typeof v === "string") return v;
@@ -13,7 +14,9 @@ function pickNumber(v, fallback) {
 }
 
 function toApi(template, merchantId) {
-  // vracíme tvar, který FE ocekává (CardTemplatePage)
+  // vracme tvar, kter FE ocekv (CardTemplatePage)
+  const walletGoogle = template?.wallet?.google || {};
+
   return {
     merchantId,
 
@@ -32,13 +35,36 @@ function toApi(template, merchantId) {
     primaryColor: template?.primaryColor || "#FF9900",
     secondaryColor: template?.secondaryColor || "#111827",
     logoUrl: template?.logoUrl || "",
+
+    wallet: {
+      google: {
+        enabled: Boolean(walletGoogle.enabled),
+        issuerName: walletGoogle.issuerName || "",
+        programName: walletGoogle.programName || "",
+        logoUrl: walletGoogle.logoUrl || "",
+        backgroundColor: walletGoogle.backgroundColor || "",
+        heroImageUrl: walletGoogle.heroImageUrl || "",
+        links: Array.isArray(walletGoogle.links)
+          ? walletGoogle.links.map((link) => ({
+              uri: link?.uri || "",
+              description: link?.description || "",
+            }))
+          : [],
+        textModules: Array.isArray(walletGoogle.textModules)
+          ? walletGoogle.textModules.map((tm) => ({
+              header: tm?.header || "",
+              body: tm?.body || "",
+            }))
+          : [],
+      },
+    },
   };
 }
 
 async function cardTemplateRoutes(fastify, options) {
   /**
    * GET /api/card-template
-   * Vrátí šablonu karty pro prihlášeného merchanta
+   * Vrt ablonu karty pro prihlenho merchanta
    */
   fastify.get("/api/card-template", async (request, reply) => {
     try {
@@ -52,7 +78,7 @@ async function cardTemplateRoutes(fastify, options) {
 
       const template = await CardTemplate.findOne({ merchantId }).lean();
 
-      // pokud šablona neexistuje ? vrátíme default
+      // pokud ablona neexistuje ? vrtme default
       if (!template) {
         return reply.send(
           toApi(
@@ -71,6 +97,18 @@ async function cardTemplateRoutes(fastify, options) {
               primaryColor: "#FF9900",
               secondaryColor: "#111827",
               logoUrl: "",
+              wallet: {
+                google: {
+                  enabled: false,
+                  issuerName: "",
+                  programName: "",
+                  logoUrl: "",
+                  backgroundColor: "",
+                  heroImageUrl: "",
+                  links: [],
+                  textModules: [],
+                },
+              },
             },
             merchantId
           )
@@ -86,7 +124,7 @@ async function cardTemplateRoutes(fastify, options) {
 
   /**
    * PUT /api/card-template
-   * Uloží / aktualizuje šablonu karty pro merchanta
+   * Ulo / aktualizuje ablonu karty pro merchanta
    */
   fastify.put("/api/card-template", async (request, reply) => {
     try {
@@ -98,6 +136,9 @@ async function cardTemplateRoutes(fastify, options) {
 
       const merchantId = userId;
       const payload = request.body || {};
+      const syncGoogleWallet =
+        request.query?.syncGoogleWallet === "1" ||
+        request.query?.syncGoogleWallet === "true";
 
       // whitelist presne podle FE tvaru
       const update = {
@@ -111,6 +152,8 @@ async function cardTemplateRoutes(fastify, options) {
         primaryColor: payload.primaryColor,
         secondaryColor: payload.secondaryColor,
         logoUrl: payload.logoUrl,
+
+        wallet: payload.wallet,
 
         rules: {
           freeStampsToReward: payload.freeStampsToReward,
@@ -138,6 +181,64 @@ async function cardTemplateRoutes(fastify, options) {
           if (Object.keys(rules).length > 0) {
             $set.rules = rules;
           }
+        } else if (key === "wallet") {
+          const walletGoogle = value?.google;
+
+          if (walletGoogle && typeof walletGoogle === "object") {
+            if (walletGoogle.enabled !== undefined) {
+              $set["wallet.google.enabled"] = Boolean(walletGoogle.enabled);
+            }
+            if (walletGoogle.issuerName !== undefined) {
+              $set["wallet.google.issuerName"] = pickString(
+                walletGoogle.issuerName,
+                ""
+              );
+            }
+            if (walletGoogle.programName !== undefined) {
+              $set["wallet.google.programName"] = pickString(
+                walletGoogle.programName,
+                ""
+              );
+            }
+            if (walletGoogle.logoUrl !== undefined) {
+              $set["wallet.google.logoUrl"] = pickString(
+                walletGoogle.logoUrl,
+                ""
+              );
+            }
+            if (walletGoogle.backgroundColor !== undefined) {
+              $set["wallet.google.backgroundColor"] = pickString(
+                walletGoogle.backgroundColor,
+                ""
+              );
+            }
+            if (walletGoogle.heroImageUrl !== undefined) {
+              $set["wallet.google.heroImageUrl"] = pickString(
+                walletGoogle.heroImageUrl,
+                ""
+              );
+            }
+            if (walletGoogle.links !== undefined) {
+              const links = Array.isArray(walletGoogle.links)
+                ? walletGoogle.links.map((link) => ({
+                    uri: pickString(link?.uri, ""),
+                    description: pickString(link?.description, ""),
+                  }))
+                : [];
+
+              $set["wallet.google.links"] = links;
+            }
+            if (walletGoogle.textModules !== undefined) {
+              const textModules = Array.isArray(walletGoogle.textModules)
+                ? walletGoogle.textModules.map((tm) => ({
+                    header: pickString(tm?.header, ""),
+                    body: pickString(tm?.body, ""),
+                  }))
+                : [];
+
+              $set["wallet.google.textModules"] = textModules;
+            }
+          }
         } else if (key === "programType") {
           $set.programType = value === "coupon" ? "coupon" : "stamps";
         } else if (key === "logoUrl") {
@@ -155,7 +256,27 @@ async function cardTemplateRoutes(fastify, options) {
         { new: true, upsert: true }
       ).lean();
 
-      return reply.send(toApi(template, merchantId));
+      const walletEnabled = Boolean(template?.wallet?.google?.enabled);
+      let walletSyncResult = { synced: false, classId: null };
+
+      if (syncGoogleWallet || walletEnabled) {
+        try {
+          const { classId } = await ensureLoyaltyClassForMerchant({
+            merchantId,
+            forcePatch: true,
+            template,
+          });
+
+          walletSyncResult = { synced: true, classId };
+        } catch (syncErr) {
+          console.warn("google wallet class sync failed", syncErr);
+        }
+      }
+
+      return reply.send({
+        ...toApi(template, merchantId),
+        googleWallet: walletSyncResult,
+      });
     } catch (err) {
       request.log.error(err, "Error updating card template");
       return reply.code(500).send({ error: "Error updating card template" });
