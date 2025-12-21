@@ -3,7 +3,10 @@ import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
 import { CardTemplate } from "../models/cardTemplate.model.js";
 import jwt from "jsonwebtoken";
-import { walletRequest } from "./googleWalletClient.js";
+import {
+  isGoogleWalletBadRequest,
+  walletRequest,
+} from "./googleWalletClient.js";
 import { loadGoogleWalletServiceAccount } from "./googleWalletAuth.js";
 import { makeClassId, makeObjectId } from "./googleWalletIds.js";
 
@@ -313,6 +316,18 @@ export async function ensureLoyaltyClassForMerchant({
 
   let existed = false;
 
+  const handleWalletError = (err) => {
+    if (isGoogleWalletBadRequest(err) && googleWalletConfig.isDevEnv) {
+      console.warn(
+        "GW_CLASS_SYNC_ERROR",
+        classId,
+        err?.responseBody?.error?.message
+      );
+    }
+
+    throw err;
+  };
+
   try {
     await walletRequest({
       method: "GET",
@@ -329,15 +344,19 @@ export async function ensureLoyaltyClassForMerchant({
         });
       }
 
-      await walletRequest({
-        method: "PATCH",
-        path: `/walletobjects/v1/loyaltyClass/${classId}`,
-        body: loyaltyClass,
-      });
+      try {
+        await walletRequest({
+          method: "PATCH",
+          path: `/walletobjects/v1/loyaltyClass/${classId}`,
+          body: loyaltyClass,
+        });
+      } catch (err) {
+        handleWalletError(err);
+      }
     }
   } catch (err) {
     if (err?.status !== 404) {
-      throw err;
+      handleWalletError(err);
     }
 
     if (googleWalletConfig.isDevEnv) {
@@ -348,11 +367,15 @@ export async function ensureLoyaltyClassForMerchant({
       });
     }
 
-    await walletRequest({
-      method: "POST",
-      path: "/walletobjects/v1/loyaltyClass",
-      body: loyaltyClass,
-    });
+    try {
+      await walletRequest({
+        method: "POST",
+        path: "/walletobjects/v1/loyaltyClass",
+        body: loyaltyClass,
+      });
+    } catch (createErr) {
+      handleWalletError(createErr);
+    }
   }
 
   if (googleWalletConfig.isDevEnv) {
