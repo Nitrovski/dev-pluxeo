@@ -383,8 +383,8 @@ export async function ensureLoyaltyObjectForCard({ cardId, card, forcePatch = fa
       objectId,
       barcodeType: loyaltyObjectPayload?.barcode?.type || null,
       barcodeValueLength: barcodeValue.length,
-      loyaltyPoints: loyaltyObjectPayload.loyaltyPoints,
-      secondaryLoyaltyPoints: loyaltyObjectPayload.secondaryLoyaltyPoints,
+      stamps: cardDoc?.stamps ?? 0,
+      rewards: cardDoc?.rewards ?? 0,
     });
   }
 
@@ -396,13 +396,15 @@ export async function ensureLoyaltyObjectForCard({ cardId, card, forcePatch = fa
       path: `/walletobjects/v1/loyaltyObject/${objectId}`,
     });
 
-    await walletRequest({
-      method: "PATCH",
-      path: `/walletobjects/v1/loyaltyObject/${objectId}`,
-      body: loyaltyObjectPayload,
-    });
-
     existed = true;
+
+    if (forcePatch) {
+      await walletRequest({
+        method: "PATCH",
+        path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+        body: loyaltyObjectPayload,
+      });
+    }
   } catch (err) {
     if (err?.status !== 404) {
       throw err;
