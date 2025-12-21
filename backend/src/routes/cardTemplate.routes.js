@@ -1,6 +1,10 @@
 import { CardTemplate } from "../models/cardTemplate.model.js";
+import { Card } from "../models/card.model.js";
 import { getAuth } from "@clerk/fastify";
-import { ensureLoyaltyClassForMerchant } from "../lib/googleWalletPass.js";
+import {
+  ensureLoyaltyClassForMerchant,
+  ensureLoyaltyObjectForCard,
+} from "../lib/googleWalletPass.js";
 
 function pickString(v, fallback = "") {
   if (typeof v === "string") return v;
@@ -11,6 +15,25 @@ function pickString(v, fallback = "") {
 function pickNumber(v, fallback) {
   const n = typeof v === "number" ? v : Number(v);
   return Number.isFinite(n) ? n : fallback;
+}
+
+function createConcurrencyQueue(limit, items, handler) {
+  let nextIndex = 0;
+
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+
+      const item = items[currentIndex];
+      // eslint-disable-next-line no-await-in-loop
+      await handler(item);
+    }
+  };
+
+  return Promise.all(
+    Array.from({ length: limit }).map(() => worker())
+  );
 }
 
 function toApi(template, merchantId) {
@@ -136,9 +159,19 @@ async function cardTemplateRoutes(fastify, options) {
 
       const merchantId = userId;
       const payload = request.body || {};
-      const syncGoogleWallet =
-        request.query?.syncGoogleWallet === "1" ||
-        request.query?.syncGoogleWallet === "true";
+      const syncWalletObjects =
+        request.query?.syncWalletObjects === "1" ||
+        request.query?.syncWalletObjects === "true";
+
+      const syncWalletObjectsLimit = Math.min(
+        200,
+        Math.max(1, pickNumber(request.query?.syncWalletObjectsLimit, 50) || 50)
+      );
+
+      const syncWalletObjectsConcurrency = Math.min(
+        5,
+        Math.max(1, pickNumber(request.query?.syncWalletObjectsConcurrency, 3) || 3)
+      );
 
       // whitelist presne podle FE tvaru
       const update = {
@@ -256,20 +289,62 @@ async function cardTemplateRoutes(fastify, options) {
         { new: true, upsert: true }
       ).lean();
 
-      const walletEnabled = Boolean(template?.wallet?.google?.enabled);
-      let walletSyncResult = { synced: false, classId: null };
+      const walletSyncResult = {
+        classSynced: false,
+        classId: null,
+        objectsSynced: 0,
+        objectsFailed: 0,
+      };
 
-      if (syncGoogleWallet || walletEnabled) {
+      try {
+        const { classId } = await ensureLoyaltyClassForMerchant({
+          merchantId,
+          forcePatch: true,
+          template,
+        });
+
+        walletSyncResult.classSynced = true;
+        walletSyncResult.classId = classId;
+      } catch (syncErr) {
+        request.log.warn({ err: syncErr }, "google wallet class sync failed");
+      }
+
+      if (syncWalletObjects) {
         try {
-          const { classId } = await ensureLoyaltyClassForMerchant({
+          const cardsToSync = await Card.find({
             merchantId,
-            forcePatch: true,
-            template,
-          });
+            "googleWallet.objectId": { $exists: true, $ne: null },
+          })
+            .sort({ updatedAt: -1 })
+            .limit(syncWalletObjectsLimit)
+            .select({ _id: 1 })
+            .lean();
 
-          walletSyncResult = { synced: true, classId };
-        } catch (syncErr) {
-          console.warn("google wallet class sync failed", syncErr);
+          await createConcurrencyQueue(
+            syncWalletObjectsConcurrency,
+            cardsToSync,
+            async (card) => {
+              try {
+                await ensureLoyaltyObjectForCard({
+                  merchantId,
+                  cardId: card._id,
+                  forcePatch: true,
+                });
+                walletSyncResult.objectsSynced += 1;
+              } catch (objectErr) {
+                walletSyncResult.objectsFailed += 1;
+                request.log.warn(
+                  { err: objectErr, cardId: card?._id },
+                  "google wallet object sync failed"
+                );
+              }
+            }
+          );
+        } catch (objectsSyncErr) {
+          request.log.warn(
+            { err: objectsSyncErr },
+            "google wallet objects sync batch failed"
+          );
         }
       }
 
