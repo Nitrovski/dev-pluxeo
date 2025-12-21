@@ -1,6 +1,7 @@
 import { googleWalletConfig } from "../config/googleWallet.config.js";
 import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
+import { CardTemplate } from "../models/cardTemplate.model.js";
 import jwt from "jsonwebtoken";
 import { walletRequest } from "./googleWalletClient.js";
 import { loadGoogleWalletServiceAccount } from "./googleWalletAuth.js";
@@ -12,6 +13,7 @@ const DEV_DEFAULT_LOGO_URL =
   "https://storage.googleapis.com/wallet-lab-tools-codelab-artifacts/LoyaltyClass/loyalty_class_logo.png";
 const DEFAULT_HEADLINE = "Věrnostní program";
 const DEFAULT_SUBHEADLINE = "Sbírejte body a odměny s Pluxeo.";
+const MAX_TEXT_MODULES = 4;
 
 function isValidHttpsUrl(url) {
   return typeof url === "string" && url.trim().toLowerCase().startsWith("https://");
@@ -42,38 +44,91 @@ function resolveDefaultLogoUrl() {
   throw error;
 }
 
-function resolveProgramLogoUrl(customer) {
-  const customerLogo = customer?.settings?.logoUrl?.trim();
+function sanitizeTextModules(textModules) {
+  if (!Array.isArray(textModules)) return [];
 
-  if (isValidHttpsUrl(customerLogo)) {
-    return customerLogo;
-  }
-
-  return resolveDefaultLogoUrl();
+  return textModules
+    .map((tm) => ({
+      header: (tm?.header || "").trim(),
+      body: (tm?.body || "").trim(),
+    }))
+    .filter((tm) => tm.header || tm.body)
+    .slice(0, MAX_TEXT_MODULES);
 }
 
-function buildLoyaltyClassPayload({ classId, customer }) {
-  const programName = (customer?.name || "").trim() || DEFAULT_PROGRAM_NAME;
-  const logoUrl = resolveProgramLogoUrl(customer);
-  const primaryColor =
-    customer?.settings?.themeColor?.trim() || DEFAULT_PRIMARY_COLOR;
+function sanitizeLinks(links) {
+  if (!Array.isArray(links)) return [];
 
-  return {
+  return links
+    .map((link) => ({
+      uri: (link?.uri || "").trim(),
+      description: (link?.description || "").trim(),
+    }))
+    .filter((link) => isValidHttpsUrl(link.uri));
+}
+
+function buildLoyaltyClassPayload({ classId, customer, template }) {
+  const walletGoogle = template?.wallet?.google || {};
+  const issuerName =
+    (walletGoogle.issuerName || customer?.name || "").trim() ||
+    DEFAULT_PROGRAM_NAME;
+  const programName =
+    (walletGoogle.programName || template?.programName || customer?.name || "")
+      .trim() || DEFAULT_PROGRAM_NAME;
+  const primaryColor =
+    walletGoogle.backgroundColor?.trim() ||
+    template?.primaryColor?.trim() ||
+    DEFAULT_PRIMARY_COLOR;
+  const logoUrlCandidate = walletGoogle.logoUrl?.trim();
+  const logoUrl = isValidHttpsUrl(logoUrlCandidate)
+    ? logoUrlCandidate
+    : resolveDefaultLogoUrl();
+  const heroImageUrl = walletGoogle.heroImageUrl?.trim();
+  const textModulesData = sanitizeTextModules(walletGoogle.textModules);
+  const linksModuleUris = sanitizeLinks(walletGoogle.links);
+
+  const payload = {
     id: classId,
-    issuerName: programName,
+    issuerName,
     programName,
     reviewStatus: "UNDER_REVIEW",
     programLogo: {
       sourceUri: { uri: logoUrl },
     },
     hexBackgroundColor: primaryColor,
-    textModulesData: [
-      {
-        header: DEFAULT_HEADLINE,
-        body: DEFAULT_SUBHEADLINE,
-      },
-    ],
+    textModulesData:
+      textModulesData.length > 0
+        ? textModulesData
+        : [
+            {
+              header: DEFAULT_HEADLINE,
+              body: DEFAULT_SUBHEADLINE,
+            },
+          ],
   };
+
+  if (isValidHttpsUrl(heroImageUrl)) {
+    payload.heroImage = {
+      sourceUri: { uri: heroImageUrl },
+    };
+  }
+
+  if (linksModuleUris.length > 0) {
+    payload.linksModuleData = {
+      uris: linksModuleUris,
+    };
+  }
+
+  if (googleWalletConfig.isDevEnv) {
+    console.log("WALLET_CLASS_SOURCE", {
+      source: "template.wallet.google",
+      logoUrl,
+      bgColor: primaryColor,
+      programName,
+    });
+  }
+
+  return payload;
 }
 
 function persistClassId(customer, classId) {
@@ -136,7 +191,11 @@ function buildLoyaltyObjectPayload({ objectId, classId, card, redeemCode }) {
   return basePayload;
 }
 
-export async function ensureLoyaltyClassForMerchant({ merchantId }) {
+export async function ensureLoyaltyClassForMerchant({
+  merchantId,
+  forcePatch = false,
+  template,
+}) {
   if (!merchantId) {
     throw new Error("merchantId is required");
   }
@@ -146,37 +205,52 @@ export async function ensureLoyaltyClassForMerchant({ merchantId }) {
     throw new Error("Customer not found for this merchant");
   }
 
+  const templateDoc =
+    template || (await CardTemplate.findOne({ merchantId }).lean());
+
   const classId = makeClassId({
     issuerId: googleWalletConfig.issuerId,
     classPrefix: googleWalletConfig.classPrefix,
     merchantId,
   });
 
+  const loyaltyClass = buildLoyaltyClassPayload({
+    classId,
+    customer,
+    template: templateDoc,
+  });
+
+  let existed = false;
+
   try {
     await walletRequest({
       method: "GET",
       path: `/walletobjects/v1/loyaltyClass/${classId}`,
     });
+    existed = true;
 
-    await persistClassId(customer, classId);
-    return { classId, existed: true };
+    if (forcePatch) {
+      await walletRequest({
+        method: "PATCH",
+        path: `/walletobjects/v1/loyaltyClass/${classId}`,
+        body: loyaltyClass,
+      });
+    }
   } catch (err) {
     if (err?.status !== 404) {
       throw err;
     }
+
+    await walletRequest({
+      method: "POST",
+      path: "/walletobjects/v1/loyaltyClass",
+      body: loyaltyClass,
+    });
   }
-
-  const loyaltyClass = buildLoyaltyClassPayload({ classId, customer });
-
-  await walletRequest({
-    method: "POST",
-    path: "/walletobjects/v1/loyaltyClass",
-    body: loyaltyClass,
-  });
 
   await persistClassId(customer, classId);
 
-  return { classId, existed: false };
+  return { classId, existed };
 }
 
 export async function ensureLoyaltyObjectForCard({ cardId, card }) {

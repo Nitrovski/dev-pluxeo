@@ -1,6 +1,9 @@
 import { getAuth } from "@clerk/fastify";
 import { Card } from "../models/card.model.js";
-import { createAddToWalletLinkForCard } from "../lib/googleWalletPass.js";
+import {
+  createAddToWalletLinkForCard,
+  ensureLoyaltyClassForMerchant,
+} from "../lib/googleWalletPass.js";
 
 export async function merchantWalletGoogleRoutes(fastify) {
   fastify.post("/api/merchant/wallet/google/link", async (request, reply) => {
@@ -27,6 +30,28 @@ export async function merchantWalletGoogleRoutes(fastify) {
     } catch (err) {
       request.log?.error?.(err, "create add to wallet link failed");
       return reply.code(500).send({ error: err?.message || "Failed to create link" });
+    }
+  });
+
+  fastify.post("/api/merchant/wallet/google/sync-class", async (request, reply) => {
+    try {
+      const { isAuthenticated, userId } = getAuth(request);
+
+      if (!isAuthenticated || !userId) {
+        return reply.code(401).send({ error: "Missing or invalid token" });
+      }
+
+      const merchantId = userId;
+
+      const { classId } = await ensureLoyaltyClassForMerchant({
+        merchantId,
+        forcePatch: true,
+      });
+
+      return reply.send({ ok: true, classId });
+    } catch (err) {
+      request.log?.error?.(err, "sync wallet class failed");
+      return reply.code(500).send({ error: err?.message || "Failed to sync class" });
     }
   });
 }
