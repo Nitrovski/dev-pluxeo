@@ -192,24 +192,20 @@ export async function merchantWalletGoogleRoutes(fastify) {
       }
 
       const merchantId = userId;
-      const walletToken = String(request.body?.walletToken || "").trim();
       const cardId = String(request.body?.cardId || "").trim();
 
-      if (!walletToken && !cardId) {
-        return reply.code(400).send({ error: "walletToken or cardId is required" });
+      if (!cardId) {
+        return reply.code(400).send({ error: "cardId is required" });
       }
 
-      const cardQuery = walletToken
-        ? { merchantId, walletToken }
-        : { merchantId, _id: cardId };
-
-      const card = await Card.findOne(cardQuery);
+      const card = await Card.findOne({ merchantId, _id: cardId });
       if (!card) {
         return reply.code(404).send({ error: "Card not found" });
       }
 
       const { objectId, classId } = await ensureLoyaltyObjectForCard({
-        card,
+        merchantId,
+        cardId: card._id,
         forcePatch: true,
       });
 

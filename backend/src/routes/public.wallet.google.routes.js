@@ -39,7 +39,10 @@ export async function publicGoogleWalletRoutes(fastify) {
       const { classId } = await ensureLoyaltyClassForMerchant({
         merchantId: card.merchantId,
       });
-      const { objectId } = await ensureLoyaltyObjectForCard({ card });
+      const { objectId } = await ensureLoyaltyObjectForCard({
+        merchantId: card.merchantId,
+        cardId: card._id,
+      });
 
       if (googleWalletConfig.isDevEnv) {
         try {

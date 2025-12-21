@@ -9,6 +9,7 @@ import {
 } from "./googleWalletClient.js";
 import { loadGoogleWalletServiceAccount } from "./googleWalletAuth.js";
 import { makeClassId, makeObjectId } from "./googleWalletIds.js";
+import { buildPublicCardPayload } from "./publicPayload.js";
 
 const DEFAULT_PROGRAM_NAME = "Pluxeo";
 const DEFAULT_PRIMARY_COLOR = "#FF9900";
@@ -80,6 +81,42 @@ function sanitizeLinks(links) {
       description: (link?.description || "").trim(),
     }))
     .filter((link) => isValidHttpsUrl(link.uri));
+}
+
+function buildObjectTextModules({ template, card }) {
+  const walletGoogle = template?.wallet?.google || {};
+  const sanitized = sanitizeTextModules(walletGoogle.textModules);
+
+  const templateModules = sanitized.map((module, idx) => ({
+    id: `tpl_${idx}`,
+    header: module.header,
+    body: module.body,
+  }));
+
+  const dynamicModules = [
+    {
+      id: "dyn_stamps",
+      header: "Razítka",
+      body: String(card?.stamps ?? 0),
+    },
+    {
+      id: "dyn_rewards",
+      header: "Odměny",
+      body: String(card?.rewards ?? 0),
+    },
+  ];
+
+  return [...templateModules, ...dynamicModules];
+}
+
+function buildObjectLinksModuleData(template) {
+  const walletGoogle = template?.wallet?.google || {};
+  const linksModuleUris = sanitizeLinks(walletGoogle.links).map((link, idx) => ({
+    uri: link.uri,
+    description: link.description || `Otevřít odkaz ${idx + 1}`,
+  }));
+
+  return linksModuleUris.length > 0 ? { uris: linksModuleUris } : null;
 }
 
 function extractClassDebugFields(loyaltyClass) {
@@ -189,60 +226,27 @@ function persistClassId(customer, classId) {
   return customer.save();
 }
 
-function pickActiveRedeemCode(redeemCodes = []) {
-  const activeCodes = redeemCodes.filter(({ status }) => status === "active");
-  return (
-    activeCodes.find(({ purpose }) => purpose === "reward") ||
-    activeCodes.find(({ purpose }) => purpose === "coupon") ||
-    null
-  );
+async function resolveLoyaltyObjectBarcode({ card, cardId }) {
+  const publicPayload = await buildPublicCardPayload(cardId);
+  const redeemCodeValue = (publicPayload?.redeemCode?.code || "").trim();
+
+  if (redeemCodeValue) {
+    return redeemCodeValue.slice(0, MAX_BARCODE_LENGTH);
+  }
+
+  const scanCode = String(card?.scanCode || "").trim();
+  return scanCode ? scanCode.slice(0, MAX_BARCODE_LENGTH) : "";
 }
 
-function buildLoyaltyObjectPayload({ objectId, classId, card, redeemCode }) {
-  const headline =
-    (card?.rewards || 0) > 0 ? "Odměna dostupná ✅" : "Sbírej razítka";
-
-  const activeCodes = (card?.redeemCodes || []).filter(
-    ({ status }) => status === "active"
-  );
-  const rewardCode =
-    redeemCode?.purpose === "reward"
-      ? redeemCode
-      : activeCodes.find(({ purpose }) => purpose === "reward");
-  const couponCode =
-    redeemCode?.purpose === "coupon"
-      ? redeemCode
-      : activeCodes.find(({ purpose }) => purpose === "coupon");
-
-  const barcodeCandidates = [rewardCode, couponCode].filter(Boolean);
-
-  let barcodeValue = "";
-  let barcodeAlternateText;
-
-  for (const candidate of barcodeCandidates) {
-    const candidateValue = (candidate?.code || "").trim();
-    if (candidateValue && candidateValue.length <= MAX_BARCODE_LENGTH) {
-      barcodeValue = candidateValue;
-      barcodeAlternateText =
-        candidate.purpose === "reward"
-          ? "Odměna k uplatnění"
-          : "Kupón k uplatnění";
-      break;
-    }
-  }
-
-  if (!barcodeValue) {
-    const walletToken = (card?.walletToken || "").trim();
-    if (walletToken) {
-      barcodeValue =
-        walletToken.length <= MAX_BARCODE_LENGTH
-          ? walletToken
-          : walletToken.slice(0, MAX_BARCODE_LENGTH);
-      barcodeAlternateText = "Pluxeo karta";
-    }
-  }
-
-  const basePayload = {
+function buildLoyaltyObjectPayload({
+  objectId,
+  classId,
+  card,
+  barcodeValue,
+  textModulesData,
+  linksModuleData,
+}) {
+  const payload = {
     id: objectId,
     classId,
     state: "ACTIVE",
@@ -256,33 +260,24 @@ function buildLoyaltyObjectPayload({ objectId, classId, card, redeemCode }) {
       label: "Odměny",
       balance: { int: card?.rewards ?? 0 },
     },
-    infoModuleData: {
-      labelValueRows: [
-        {
-          columns: [
-            { label: "Razítka", value: String(card?.stamps ?? 0) },
-            { label: "Odměny", value: String(card?.rewards ?? 0) },
-          ],
-        },
-      ],
-    },
-    textModulesData: [
-      {
-        header: headline,
-        body: `Razítka: ${card?.stamps ?? 0}\nOdměny: ${card?.rewards ?? 0}`,
-      },
-    ],
   };
 
   if (barcodeValue) {
-    basePayload.barcode = {
+    payload.barcode = {
       type: "QR_CODE",
       value: barcodeValue,
-      ...(barcodeAlternateText ? { alternateText: barcodeAlternateText } : {}),
     };
   }
 
-  return basePayload;
+  if (Array.isArray(textModulesData) && textModulesData.length > 0) {
+    payload.textModulesData = textModulesData;
+  }
+
+  if (linksModuleData?.uris?.length > 0) {
+    payload.linksModuleData = linksModuleData;
+  }
+
+  return payload;
 }
 
 export async function ensureLoyaltyClassForMerchant({
@@ -403,42 +398,64 @@ export async function ensureLoyaltyClassForMerchant({
   return { classId, existed };
 }
 
-export async function ensureLoyaltyObjectForCard({ cardId, card, forcePatch = false }) {
-  if (!cardId && !card) {
-    throw new Error("cardId or card is required");
+export async function ensureLoyaltyObjectForCard({
+  merchantId,
+  cardId,
+  forcePatch = false,
+}) {
+  if (!merchantId) {
+    throw new Error("merchantId is required");
   }
 
-  const cardDoc = card || (await Card.findById(cardId));
+  if (!cardId) {
+    throw new Error("cardId is required");
+  }
+
+  const cardDoc = await Card.findById(cardId);
   if (!cardDoc) {
     throw new Error("Card not found");
   }
 
+  if (String(cardDoc.merchantId) !== String(merchantId)) {
+    throw new Error("Card does not belong to merchant");
+  }
+
+  const template = await CardTemplate.findOne({ merchantId }).lean();
+
   const { classId } = await ensureLoyaltyClassForMerchant({
-    merchantId: cardDoc.merchantId,
+    merchantId,
     forcePatch,
+    template,
   });
 
   const objectId = makeObjectId({
     issuerId: googleWalletConfig.issuerId,
-    cardId: cardId || cardDoc._id,
+    cardId,
   });
 
-  const redeemCode = pickActiveRedeemCode(cardDoc.redeemCodes);
+  const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
+  const textModulesData = buildObjectTextModules({ template, card: cardDoc });
+  const linksModuleData = buildObjectLinksModuleData(template);
+
   const loyaltyObjectPayload = buildLoyaltyObjectPayload({
     objectId,
     classId,
     card: cardDoc,
-    redeemCode,
+    barcodeValue,
+    textModulesData,
+    linksModuleData,
   });
 
   if (googleWalletConfig.isDevEnv) {
-    const barcodeValue = loyaltyObjectPayload?.barcode?.value || "";
+    const barcodeValueLength = loyaltyObjectPayload?.barcode?.value?.length || 0;
     console.log("GOOGLE_WALLET_OBJECT_PAYLOAD", {
       objectId,
       barcodeType: loyaltyObjectPayload?.barcode?.type || null,
-      barcodeValueLength: barcodeValue.length,
+      barcodeValueLength,
       stamps: cardDoc?.stamps ?? 0,
       rewards: cardDoc?.rewards ?? 0,
+      textModules: textModulesData?.length ?? 0,
+      links: linksModuleData?.uris?.length ?? 0,
     });
   }
 
@@ -452,13 +469,11 @@ export async function ensureLoyaltyObjectForCard({ cardId, card, forcePatch = fa
 
     existed = true;
 
-    if (forcePatch) {
-      await walletRequest({
-        method: "PATCH",
-        path: `/walletobjects/v1/loyaltyObject/${objectId}`,
-        body: loyaltyObjectPayload,
-      });
-    }
+    await walletRequest({
+      method: "PATCH",
+      path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+      body: loyaltyObjectPayload,
+    });
   } catch (err) {
     if (err?.status !== 404) {
       throw err;
@@ -489,7 +504,10 @@ export async function ensureLoyaltyObjectForWalletToken({ walletToken }) {
     throw new Error("Card not found");
   }
 
-  return ensureLoyaltyObjectForCard({ card });
+  return ensureLoyaltyObjectForCard({
+    merchantId: card.merchantId,
+    cardId: card._id,
+  });
 }
 
 export function buildAddToGoogleWalletUrl({ classId, objectId }) {
@@ -545,7 +563,10 @@ export async function createAddToWalletLinkForCard(cardId) {
     merchantId: card.merchantId,
   });
 
-  const { objectId } = await ensureLoyaltyObjectForCard({ cardId });
+  const { objectId } = await ensureLoyaltyObjectForCard({
+    merchantId: card.merchantId,
+    cardId,
+  });
 
   const url = buildAddToGoogleWalletUrl({ classId, objectId });
 
@@ -554,7 +575,14 @@ export async function createAddToWalletLinkForCard(cardId) {
 
 export async function syncGoogleWalletObject(cardId, logger = null) {
   try {
-    await ensureLoyaltyObjectForCard({ cardId });
+    const card = await Card.findById(cardId);
+
+    if (!card) return;
+
+    await ensureLoyaltyObjectForCard({
+      merchantId: card.merchantId,
+      cardId: card._id,
+    });
   } catch (err) {
     if (logger?.warn) {
       logger.warn({ err, cardId }, "google wallet sync failed");
