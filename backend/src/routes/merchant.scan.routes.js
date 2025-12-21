@@ -112,7 +112,11 @@ export async function merchantScanRoutes(fastify) {
   fastify.post("/api/merchant/scan", async (request, reply) => {
     let merchantId = null;
     let lastCardId = null;
-    const raw = String(request.body?.code || "").trim();
+    const raw = String(request.body?.code || "")
+      .trim()
+      .replace(/[\r\n\t ]+/g, "");
+
+    console.log("SCAN_RAW", { raw });
 
     const respondWithFailure = async (status, reason, body = {}) => {
       await recordScanEvent(request, {
@@ -129,7 +133,7 @@ export async function merchantScanRoutes(fastify) {
 
     const respondNotFound = () =>
       respondWithFailure(404, ScanFailureReasons.CODE_NOT_FOUND, {
-        error: "QR kód je platný, ale neodpovídá žádné kartě",
+        error: "QR kód není platný pro žádnou kartu",
       });
 
     try {
@@ -148,7 +152,7 @@ export async function merchantScanRoutes(fastify) {
         });
       }
 
-      const buildCandidates = (value) =>
+      const buildRedeemCandidates = (value) =>
         Array.from(
           new Set([String(value || ""), normCode(value), normCodeAlnum(value)].filter(Boolean))
         );
@@ -166,14 +170,17 @@ export async function merchantScanRoutes(fastify) {
 
       console.log("SCAN_PARSED", { kind, preview: raw.slice(0, 12) });
 
-      const codeCandidates = buildCandidates(extracted);
-
       /* ------------------------------------------------------------ */
       /* Redeem (reward / coupon)                                     */
       /* ------------------------------------------------------------ */
       if (kind === "redeem" || kind === "fallback") {
+        const redeemLookupValue = kind === "redeem" ? extracted : raw;
+        const redeemCandidates = buildRedeemCandidates(redeemLookupValue);
+
+        console.log("REDEEM_LOOKUP", { redeemCode: redeemLookupValue });
+
         const redeemCard = await Card.findOne({
-          "redeemCodes.code": { $in: codeCandidates },
+          "redeemCodes.code": { $in: redeemCandidates },
         });
 
         if (redeemCard) {
@@ -197,9 +204,9 @@ export async function merchantScanRoutes(fastify) {
           }
 
           let res = null;
-          let usedCode = codeCandidates[0];
+          let usedCode = redeemCandidates[0];
 
-          for (const c of codeCandidates) {
+          for (const c of redeemCandidates) {
             usedCode = c;
 
             // eslint-disable-next-line no-await-in-loop
@@ -280,9 +287,16 @@ export async function merchantScanRoutes(fastify) {
       }
 
       /* ------------------------------------------------------------ */
-      /* Stamps via scanCode                                           */
+      /* Stamps via walletToken                                        */
       /* ------------------------------------------------------------ */
-      const scanCard = await Card.findOne({ scanCode: { $in: codeCandidates } });
+      const walletTokenLookup = kind === "stamp" ? extracted : raw;
+
+      console.log("STAMP_LOOKUP", { walletToken: walletTokenLookup });
+
+      const scanCard = await Card.findOne({
+        merchantId,
+        walletToken: walletTokenLookup,
+      });
 
       if (!scanCard) {
         return respondNotFound();

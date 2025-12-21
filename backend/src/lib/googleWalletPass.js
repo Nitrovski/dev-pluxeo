@@ -9,7 +9,6 @@ import {
 } from "./googleWalletClient.js";
 import { loadGoogleWalletServiceAccount } from "./googleWalletAuth.js";
 import { makeClassId, makeObjectId } from "./googleWalletIds.js";
-import { buildPublicCardPayload } from "./publicPayload.js";
 
 const DEFAULT_PROGRAM_NAME = "Pluxeo";
 const DEFAULT_PRIMARY_COLOR = "#FF9900";
@@ -467,24 +466,30 @@ function persistClassId(customer, classId) {
 }
 
 async function resolveLoyaltyObjectBarcode({ card, cardId }) {
-  const publicPayload = await buildPublicCardPayload(cardId);
-  const redeemCodeValue = normBarcodeValue(publicPayload?.redeemCode?.code);
-  const scanCode = normBarcodeValue(card?.scanCode);
+  const cardDoc = card || (await Card.findById(cardId));
+  const redeemCodes = Array.isArray(cardDoc?.redeemCodes)
+    ? cardDoc.redeemCodes.filter(Boolean)
+    : [];
 
-  const hasRedeem = Boolean(redeemCodeValue);
+  const activeRedeem =
+    redeemCodes.find((x) => x?.status === "active" && x?.purpose === "reward") ||
+    redeemCodes.find((x) => x?.status === "active" && x?.purpose === "coupon") ||
+    null;
 
-  const value = hasRedeem
-    ? `PXR:${redeemCodeValue}`
-    : scanCode
-    ? `PXS:${scanCode}`
-    : "";
+  const qrMode = activeRedeem ? "redeem" : "stamp";
+  const rawValue =
+    qrMode === "redeem"
+      ? `PXR:${activeRedeem?.code ?? ""}`
+      : `PXS:${cardDoc?.walletToken ?? ""}`;
 
-  const normalized = String(value || "")
+  const qrValue = String(rawValue)
     .trim()
     .replace(/[\r\n\t ]+/g, "")
     .slice(0, MAX_BARCODE_LENGTH);
 
-  return normalized;
+  console.log("WALLET_QR_VALUE", { qrValue });
+
+  return qrValue;
 }
 
 function buildLoyaltyObjectPayload({
