@@ -469,13 +469,22 @@ function persistClassId(customer, classId) {
 async function resolveLoyaltyObjectBarcode({ card, cardId }) {
   const publicPayload = await buildPublicCardPayload(cardId);
   const redeemCodeValue = normBarcodeValue(publicPayload?.redeemCode?.code);
-
-  if (redeemCodeValue) {
-    return redeemCodeValue.slice(0, MAX_BARCODE_LENGTH);
-  }
-
   const scanCode = normBarcodeValue(card?.scanCode);
-  return scanCode ? scanCode.slice(0, MAX_BARCODE_LENGTH) : "";
+
+  const hasRedeem = Boolean(redeemCodeValue);
+
+  const value = hasRedeem
+    ? `PXR:${redeemCodeValue}`
+    : scanCode
+    ? `PXS:${scanCode}`
+    : "";
+
+  const normalized = String(value || "")
+    .trim()
+    .replace(/[\r\n\t ]+/g, "")
+    .slice(0, MAX_BARCODE_LENGTH);
+
+  return normalized;
 }
 
 function buildLoyaltyObjectPayload({

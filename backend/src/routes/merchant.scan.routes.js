@@ -112,7 +112,7 @@ export async function merchantScanRoutes(fastify) {
   fastify.post("/api/merchant/scan", async (request, reply) => {
     let merchantId = null;
     let lastCardId = null;
-    const raw = request.body?.code;
+    const raw = String(request.body?.code || "").trim();
 
     const respondWithFailure = async (status, reason, body = {}) => {
       await recordScanEvent(request, {
@@ -127,6 +127,11 @@ export async function merchantScanRoutes(fastify) {
       return reply.code(status).send(body);
     };
 
+    const respondNotFound = () =>
+      respondWithFailure(404, ScanFailureReasons.CODE_NOT_FOUND, {
+        error: "QR kód je platný, ale neodpovídá žádné kartě",
+      });
+
     try {
       const { isAuthenticated, userId } = getAuth(request);
       if (!isAuthenticated || !userId) {
@@ -137,123 +142,141 @@ export async function merchantScanRoutes(fastify) {
 
       merchantId = userId;
 
-      const code = normCode(raw);
-      const codeAlt = normCodeAlnum(raw);
-
-      if (!code) {
+      if (!raw) {
         return respondWithFailure(400, ScanFailureReasons.CODE_MISSING, {
           error: "code is required",
         });
       }
 
-      // kandidáti pro match (ruzné QR formáty)
+      const buildCandidates = (value) =>
+        Array.from(
+          new Set([String(value || ""), normCode(value), normCodeAlnum(value)].filter(Boolean))
+        );
 
-      const codeCandidates = Array.from(
-        new Set([code, codeAlt].filter(Boolean))
-      );
+      let kind = "fallback";
+      let extracted = raw;
+
+      if (raw.startsWith("PXR:")) {
+        kind = "redeem";
+        extracted = raw.slice(4);
+      } else if (raw.startsWith("PXS:")) {
+        kind = "stamp";
+        extracted = raw.slice(4);
+      }
+
+      console.log("SCAN_PARSED", { kind, preview: raw.slice(0, 12) });
+
+      const codeCandidates = buildCandidates(extracted);
 
       /* ------------------------------------------------------------ */
       /* Redeem (reward / coupon)                                     */
       /* ------------------------------------------------------------ */
-      const redeemCard = await Card.findOne({
-        "redeemCodes.code": { $in: codeCandidates },
-      });
+      if (kind === "redeem" || kind === "fallback") {
+        const redeemCard = await Card.findOne({
+          "redeemCodes.code": { $in: codeCandidates },
+        });
 
-      if (redeemCard) {
-        lastCardId = redeemCard._id;
+        if (redeemCard) {
+          lastCardId = redeemCard._id;
+          console.log("SCAN_CARD_FOUND", { cardId: String(redeemCard._id) });
 
-        if (String(redeemCard.merchantId) !== merchantId) {
-          return respondWithFailure(403, ScanFailureReasons.CODE_NOT_FOUND, {
-            error: "code not found for merchant",
-          });
-        }
-
-        if (redeemCard.lastEventAt) {
-          const diff = Date.now() - new Date(redeemCard.lastEventAt).getTime();
-          if (diff >= 0 && diff < REDEEM_COOLDOWN_MS) {
-            return respondWithFailure(429, ScanFailureReasons.RATE_LIMITED, {
-              error: "redeem throttled",
-              retryAfterMs: REDEEM_COOLDOWN_MS - diff,
+          if (String(redeemCard.merchantId) !== merchantId) {
+            return respondWithFailure(403, ScanFailureReasons.CODE_NOT_FOUND, {
+              error: "code not found for merchant",
             });
           }
-        }
 
-        let res = null;
-        let usedCode = codeCandidates[0];
+          if (redeemCard.lastEventAt) {
+            const diff = Date.now() - new Date(redeemCard.lastEventAt).getTime();
+            if (diff >= 0 && diff < REDEEM_COOLDOWN_MS) {
+              return respondWithFailure(429, ScanFailureReasons.RATE_LIMITED, {
+                error: "redeem throttled",
+                retryAfterMs: REDEEM_COOLDOWN_MS - diff,
+              });
+            }
+          }
 
-        for (const c of codeCandidates) {
-          usedCode = c;
+          let res = null;
+          let usedCode = codeCandidates[0];
 
-          // eslint-disable-next-line no-await-in-loop
-          res = await redeemByCodeForMerchant({
-            Card,
-            CardEvent,
+          for (const c of codeCandidates) {
+            usedCode = c;
+
+            // eslint-disable-next-line no-await-in-loop
+            res = await redeemByCodeForMerchant({
+              Card,
+              CardEvent,
+              merchantId,
+              code: c,
+              source: "merchant_scan",
+              actorId: merchantId,
+            });
+
+            if (res?.ok) break;
+          }
+
+          if (!res || res.ok !== true || !res.card) {
+            if (res?.card?._id) lastCardId = res.card._id;
+
+            const status = res?.status || 400;
+            return respondWithFailure(
+              status,
+              res?.reason || ScanFailureReasons.REDEEM_FAILED,
+              {
+                error: res?.error || "redeem failed",
+              }
+            );
+          }
+
+          const updatedCard = res.card;
+          lastCardId = updatedCard._id;
+
+          await syncWalletForCard(String(updatedCard._id), request);
+
+          const publicPayload = await buildPublicCardPayload(
+            String(updatedCard._id)
+          );
+
+          const redeemedAt =
+            findRedeemedAtFromCard(updatedCard, res.code || usedCode) ||
+            new Date().toISOString();
+
+          await recordScanEvent(request, {
             merchantId,
-            code: c,
-            source: "merchant_scan",
-            actorId: merchantId,
+            cardId: lastCardId,
+            code: res.code || usedCode,
+            status: "success",
+            payload: {
+              purpose: res.purpose,
+              redeemedAt,
+              cardType: updatedCard.type ?? "stamps",
+            },
           });
 
-          if (res?.ok) break;
+          return reply.send({
+            ok: true,
+
+            redeemed: {
+              code: res.code || usedCode,
+              purpose: res.purpose, // reward | coupon
+              redeemedAt,
+              couponMeta: res.purpose === "coupon" ? res.meta ?? null : null,
+            },
+
+            card: {
+              cardId: String(updatedCard._id),
+              customerId: updatedCard.customerId ?? null,
+              stamps: Number(updatedCard.stamps || 0),
+              rewards: Number(updatedCard.rewards || 0),
+            },
+
+            public: publicPayload,
+          });
         }
 
-        if (!res || res.ok !== true || !res.card) {
-          if (res?.card?._id) lastCardId = res.card._id;
-
-          const status = res?.status || 400;
-          return respondWithFailure(
-            status,
-            res?.reason || ScanFailureReasons.REDEEM_FAILED,
-            {
-              error: res?.error || "redeem failed",
-            }
-          );
+        if (kind === "redeem") {
+          return respondNotFound();
         }
-
-        const updatedCard = res.card;
-        lastCardId = updatedCard._id;
-
-        await syncWalletForCard(String(updatedCard._id), request);
-
-        const publicPayload = await buildPublicCardPayload(
-          String(updatedCard._id)
-        );
-
-        const redeemedAt =
-          findRedeemedAtFromCard(updatedCard, res.code || usedCode) ||
-          new Date().toISOString();
-
-        await recordScanEvent(request, {
-          merchantId,
-          cardId: lastCardId,
-          code: res.code || usedCode,
-          status: "success",
-          payload: {
-            purpose: res.purpose,
-            redeemedAt,
-            cardType: updatedCard.type ?? "stamps",
-          },
-        });
-
-        return reply.send({
-          ok: true,
-
-          redeemed: {
-            code: res.code || usedCode,
-            purpose: res.purpose, // reward | coupon
-            redeemedAt,
-            couponMeta: res.purpose === "coupon" ? res.meta ?? null : null,
-          },
-
-          card: {
-            cardId: String(updatedCard._id),
-            customerId: updatedCard.customerId ?? null,
-            stamps: Number(updatedCard.stamps || 0),
-            rewards: Number(updatedCard.rewards || 0),
-          },
-
-          public: publicPayload,
-        });
       }
 
       /* ------------------------------------------------------------ */
@@ -262,12 +285,11 @@ export async function merchantScanRoutes(fastify) {
       const scanCard = await Card.findOne({ scanCode: { $in: codeCandidates } });
 
       if (!scanCard) {
-        return respondWithFailure(404, ScanFailureReasons.CODE_NOT_FOUND, {
-          error: "Card not found for code",
-        });
+        return respondNotFound();
       }
 
       lastCardId = scanCard._id;
+      console.log("SCAN_CARD_FOUND", { cardId: String(scanCard._id) });
 
       if (String(scanCard.merchantId) !== merchantId) {
         return respondWithFailure(403, ScanFailureReasons.CODE_NOT_FOUND, {
@@ -349,7 +371,7 @@ export async function merchantScanRoutes(fastify) {
       await recordScanEvent(request, {
         merchantId,
         cardId: lastCardId,
-        code,
+        code: raw,
         status: "success",
         payload: {
           purpose: "stamp",
