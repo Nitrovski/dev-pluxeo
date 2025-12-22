@@ -6,7 +6,7 @@ import { issueRedeemCode } from "../lib/redeemCodes.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
-import { syncGoogleWalletObject } from "../lib/googleWalletPass.js";
+import { ensureGooglePassForCard } from "../lib/googleWalletPass.js";
 import { ensureCardHasScanCode } from "../lib/scanCode.js";
 
 function normToken(v) {
@@ -139,7 +139,14 @@ export async function merchantStampRoutes(fastify) {
         })
       );
 
-      await syncGoogleWalletObject(String(card._id), request.log);
+      try {
+        await ensureGooglePassForCard({
+          merchantId,
+          cardId: String(card._id),
+        });
+      } catch (err) {
+        request.log?.warn?.({ err }, "google wallet ensure failed");
+      }
 
       // 5) vrat updated public payload
       const publicPayload = await buildPublicCardPayload(String(card._id));
