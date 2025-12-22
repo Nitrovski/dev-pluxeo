@@ -7,6 +7,35 @@ import { buildCardEventPayload } from "../lib/eventSchemas.js";
 import { generateScanCode, ensureCardHasScanCode } from "../lib/scanCode.js";
 import { ensureGooglePassForCard } from "../lib/googleWalletPass.js";
 
+const normalizeEnrollmentCode = (value) => String(value || "").trim().toLowerCase();
+const normalizeClientId = (value) => String(value || "").trim().toLowerCase();
+
+function escapeRegex(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildEnrollSuccessPayload({
+  card,
+  customer,
+  cardContent,
+  resolvedPassType,
+  alreadyExists,
+}) {
+  return {
+    ok: true,
+    alreadyExists,
+    cardId: card._id,
+    walletToken: card.walletToken,
+    merchantName: customer.name,
+    cardContent,
+    passTypeIssued: resolvedPassType,
+    wallet: {
+      apple: { supported: false },
+      google: { supported: false },
+    },
+  };
+}
+
 function generateWalletToken() {
   return crypto.randomBytes(24).toString("base64url");
 }
@@ -15,7 +44,7 @@ export default async function enrollRoutes(fastify) {
   /**
    * POST /api/enroll
    * Public endpoint: zákazník naskenuje merchant QR a vytvorí se mu karta.
-   * Body: { code: string, clientId: string }
+   * Body: { code: string, clientId?: string }
    */
   fastify.post(
     "/api/enroll",
@@ -27,27 +56,69 @@ export default async function enrollRoutes(fastify) {
     async (request, reply) => {
       try {
         const body = request.body || {};
-        const code = String(body.code || "").trim();
-        const clientId = String(body.clientId || "").trim();
+        const enrollmentCode = normalizeEnrollmentCode(body.code);
+        const normalizedClientId = normalizeClientId(body.clientId);
 
-        if (!code) return reply.code(400).send({ error: "code is required" });
-        if (!clientId) return reply.code(400).send({ error: "clientId is required" });
+        const effectiveClientId =
+          normalizedClientId || `temp-${crypto.randomBytes(8).toString("hex")}`;
 
+        const requestId = request.id;
         const ip = request.ip;
         const ua = request.headers["user-agent"] || "";
 
+        const logContextBase = {
+          requestId,
+          ip,
+          ua,
+          enrollmentCode,
+          clientId: normalizedClientId || null,
+          effectiveClientId,
+        };
+
+        if (!enrollmentCode) {
+          const payload = { ok: false, error: "code is required" };
+          request.log.warn({ ...logContextBase, statusCode: 400, payload }, "Enroll invalid input");
+          return reply.code(400).send(payload);
+        }
+
         // Najdi merchanta podle enrollment kódu
-        const customer = await Customer.findOne({ "settings.enrollment.code": code });
+        const customer = await Customer.findOne({
+          $expr: {
+            $eq: [
+              { $toLower: "$settings.enrollment.code" },
+              enrollmentCode,
+            ],
+          },
+        });
         if (!customer) {
-          request.log.warn({ ip, ua }, "Invalid enrollment code");
-          return reply.code(404).send({ error: "Invalid enrollment code" });
+          const payload = { ok: false, error: "Invalid enrollment code" };
+          request.log.warn(
+            { ...logContextBase, statusCode: 404, payload },
+            "Invalid enrollment code"
+          );
+          return reply.code(404).send(payload);
         }
 
         const enrollment = customer.settings?.enrollment;
         if (!enrollment || enrollment.status !== "active") {
-          request.log.warn({ ip, ua, merchantId: customer.merchantId }, "Enrollment disabled");
-          return reply.code(403).send({ error: "Enrollment disabled" });
+          const payload = { ok: false, error: "Enrollment disabled" };
+          request.log.warn(
+            {
+              ...logContextBase,
+              merchantId: customer.merchantId,
+              statusCode: 403,
+              payload,
+            },
+            "Enrollment disabled"
+          );
+          return reply.code(403).send(payload);
         }
+
+        const logContext = {
+          ...logContextBase,
+          merchantId: customer.merchantId,
+          customerId: customer.customerId,
+        };
 
         // MVP: content snapshot zatím bereme z customers.settings.cardContent
         const cardContent = customer.settings?.cardContent || {};
@@ -70,27 +141,42 @@ export default async function enrollRoutes(fastify) {
             ? Number(template.rules.freeStampsToReward)
             : 10;
 
-        // 1) idempotence: pokud u karta pro tohle zarízení existuje, vrat ji
-        const existing = await Card.findOne({ merchantId: customer.merchantId, clientId });
-        if (existing) {
-          await ensureCardHasScanCode(existing);
+        // 1) idempotence: pokud u karta pro tohle zarízení existuje, vrat ji
+        const existing =
+          normalizedClientId
+            ? await Card.findOne({
+                merchantId: customer.merchantId,
+                clientId: new RegExp(`^${escapeRegex(normalizedClientId)}$`, "i"),
+              })
+            : null;
+
+        const existingByCustomer =
+          existing || !customer.customerId
+            ? existing
+            : await Card.findOne({
+                merchantId: customer.merchantId,
+                customerId: customer.customerId,
+              });
+
+        const resolvedExisting = existing || existingByCustomer;
+
+        if (resolvedExisting) {
+          await ensureCardHasScanCode(resolvedExisting);
+
+          const payload = buildEnrollSuccessPayload({
+            card: resolvedExisting,
+            customer,
+            cardContent,
+            resolvedPassType,
+            alreadyExists: true,
+          });
 
           request.log.info(
-            { ip, ua, merchantId: customer.merchantId, clientId, cardId: existing._id },
+            { ...logContext, cardId: resolvedExisting._id, payload },
             "Enroll idempotent hit"
           );
 
-          return reply.code(200).send({
-            cardId: existing._id,
-            walletToken: existing.walletToken,
-            merchantName: customer.name,
-            cardContent,
-            passTypeIssued: resolvedPassType,
-            wallet: {
-              apple: { supported: false },
-              google: { supported: false },
-            },
-          });
+          return reply.code(200).send(payload);
         }
 
         // 2) vytvor novou kartu
@@ -100,7 +186,7 @@ export default async function enrollRoutes(fastify) {
           const cardDoc = {
             merchantId: customer.merchantId,
             customerId: customer.customerId,
-            clientId,
+            clientId: effectiveClientId,
             walletToken,
             scanCode: generateScanCode(),
             stamps: 0,
@@ -136,65 +222,57 @@ export default async function enrollRoutes(fastify) {
               actor: { type: "system", source: "public-enroll" },
               payload: {
                 customerId: customer.customerId,
-                clientId,
+                clientId: effectiveClientId,
               },
             })
           );
 
+          const payload = buildEnrollSuccessPayload({
+            card,
+            customer,
+            cardContent,
+            resolvedPassType,
+            alreadyExists: false,
+          });
+
           request.log.info(
-            {
-              ip,
-              ua,
-              merchantId: customer.merchantId,
-              customerId: customer.customerId,
-              clientId,
-              cardId: card._id,
-              type: programType,
-            },
+            { ...logContext, cardId: card._id, payload, type: programType },
             "Enroll success"
           );
 
-          return reply.code(201).send({
-            cardId: card._id,
-            walletToken,
-            merchantName: customer.name,
-            cardContent,
-            passTypeIssued: resolvedPassType,
-            wallet: {
-              apple: { supported: false },
-              google: { supported: false },
-            },
-          });
+          return reply.code(200).send(payload);
         } catch (err) {
           // race condition: pokud to paralelne vytvoril jiný request, docti a vrat
           if (err?.code === 11000) {
-            const card = await Card.findOne({ merchantId: customer.merchantId, clientId });
+            const card = await Card.findOne({
+              merchantId: customer.merchantId,
+              clientId: effectiveClientId,
+            });
             if (card) {
               await ensureCardHasScanCode(card);
 
+              const payload = buildEnrollSuccessPayload({
+                card,
+                customer,
+                cardContent,
+                resolvedPassType,
+                alreadyExists: true,
+              });
+
               request.log.info(
-                { ip, ua, merchantId: customer.merchantId, clientId, cardId: card._id },
+                { ...logContext, cardId: card._id, payload },
                 "Enroll race resolved"
               );
 
-              return reply.code(200).send({
-                cardId: card._id,
-                walletToken: card.walletToken,
-                merchantName: customer.name,
-                cardContent,
-                passTypeIssued: resolvedPassType,
-                wallet: {
-                  apple: { supported: false },
-                  google: { supported: false },
-                },
-              });
+              return reply.code(200).send(payload);
             }
           }
           throw err;
         }
       } catch (err) {
-        request.log.error(err, "Enroll error");
-        return reply.code(500).send({ error: "Internal server error" });
+        const payload = { ok: false, error: "Internal server error" };
+        request.log.error({ err, ...logContextBase, payload }, "Enroll error");
+        return reply.code(500).send(payload);
       }
     }
   );
