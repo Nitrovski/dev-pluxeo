@@ -6,9 +6,12 @@ function normCode(v) {
   return typeof v === "string" ? v.trim().toUpperCase() : "";
 }
 
-// Klíc pro vyhledávání: jen A-Z0-9 (bez pomlcek, mezer, atd.)
-function codeKey(v) {
-  return normCode(v).replace(/[^A-Z0-9]/g, "");
+function normCodeKey(v) {
+  return String(v || "")
+    .trim()
+    .toUpperCase()
+    .replace(/^PXR:/, "")
+    .replace(/[^A-Z0-9]/g, "");
 }
 
 export function isActiveRedeem(rc, now = new Date()) {
@@ -54,7 +57,7 @@ export function expireActiveRedeem(card, purpose, now = new Date()) {
 // Najdi aktivní redeem podle code (v rámci jednoho card dokumentu)
 // - porovnává se pres codeKey, aby proel i scan bez pomlcek
 export function findActiveRedeemByCode(card, code, now = new Date()) {
-  const key = codeKey(code);
+  const key = normCodeKey(code);
   if (!key) return null;
   if (!Array.isArray(card.redeemCodes)) return null;
 
@@ -63,7 +66,7 @@ export function findActiveRedeemByCode(card, code, now = new Date()) {
       if (!rc) return false;
       if (rc.status !== "active") return false;
 
-      const rcKey = rc.codeKey ? String(rc.codeKey) : codeKey(rc.code);
+      const rcKey = rc.codeKey ? normCodeKey(rc.codeKey) : normCodeKey(rc.code);
       if (rcKey !== key) return false;
 
       if (rc.validTo && new Date(rc.validTo) <= now) return false;
@@ -96,7 +99,7 @@ export function issueRedeemCode(
   if (!Array.isArray(card.redeemCodes)) card.redeemCodes = [];
 
   const normalizedDisplay = normCode(code);
-  const key = codeKey(code);
+  const key = normCodeKey(code);
 
   if (!normalizedDisplay || !key) {
     const err = new Error("Invalid redeem code");
@@ -124,12 +127,12 @@ export function issueRedeemCode(
 
 /**
  * Merchant scan helper:
- * - najde kartu podle merchantId + redeemCodes.codeKey (primárne)
- * - fallback pro stará data: redeemCodes.code (vcetne alnum varianty)
+ * - najde kartu podle merchantId + redeemCodes.codeKey
  * - validuje active + validTo
  * - provede redeem podle redeemCode.purpose (reward/coupon)
  * - zapíe CardEvent
  */
+
 export async function redeemByCodeForMerchant({
   Card,
   CardEvent,
@@ -138,65 +141,35 @@ export async function redeemByCodeForMerchant({
   source = "merchant-scan",
   actorId = merchantId,
 }) {
-  // --- safe normalizace (aby nikdy nepadla 500) ---
-  const raw = String(code || "");
-  const rawWithoutPrefix = raw.replace(/^PXR:/i, "");
-  const input = normCode(rawWithoutPrefix);
-  const inputAlnum = input.replace(/[^A-Z0-9]/g, "");
+  const key = normCodeKey(code);
 
-  // safe codeKey()  pokud tvoje codeKey() nekdy throwne, tak to chytíme
-  let key = null;
-  try {
-    // pokud má codeKey helper, pouij ho
-    key = codeKey(rawWithoutPrefix);
-  } catch (e) {
-    key = null;
-  }
-  // fallback: alnum forma je pro lookup prakticky codeKey
-  if (!key) key = inputAlnum;
-
-  if (!input || !key) {
+  if (!key) {
     return { ok: false, status: 400, error: "code is required" };
   }
 
   const now = new Date();
 
-  const matchLookup = {
+  const cardMatchQuery = {
     merchantId,
-    $or: [
-      { "redeemCodes.codeKey": key },
-      { "redeemCodes.code": { $in: [input, inputAlnum] } },
-    ],
+    redeemCodes: { $elemMatch: { codeKey: key, status: "active" } },
   };
 
-  const card = await Card.findOne(matchLookup);
-
-  await ensureCardHasScanCode(card);
+  const card = await Card.findOne(cardMatchQuery);
 
   if (!card) {
     return { ok: false, status: 404, error: "Code not found" };
   }
 
+  await ensureCardHasScanCode(card);
+
   const list = Array.isArray(card.redeemCodes) ? card.redeemCodes : [];
-  if (list.length === 0) {
-    return { ok: false, status: 400, error: "No redeem codes available" };
-  }
+  const redeem = list.find((x) => {
+    if (!x || x.status !== "active") return false;
 
-  const redeemIndex = list.findIndex((x) => {
-    if (!x) return false;
-
-    const xCode = typeof x.code === "string" ? x.code.trim().toUpperCase() : "";
-    const xCodeAlnum = xCode.replace(/[^A-Z0-9]/g, "");
-    const xKey = x.codeKey ? String(x.codeKey) : xCodeAlnum;
-
-    return xKey === key || xCode === input || xCodeAlnum === inputAlnum;
+    const xKey = normCodeKey(x.codeKey ?? x.code);
+    return xKey === key;
   });
 
-  if (redeemIndex === -1) {
-    return { ok: false, status: 404, error: "Code not found" };
-  }
-
-  const redeem = list[redeemIndex];
   const purpose = redeem?.purpose || "reward"; // backward compatible
 
   const logFailure = async (reason, status, error) => {
@@ -210,7 +183,7 @@ export async function redeemByCodeForMerchant({
         templateId: card.templateId ?? null,
         actor: { type: "merchant", actorId, source },
         payload: {
-          code: input,
+          code,
           codeKey: key,
           purpose,
           reason,
@@ -221,8 +194,8 @@ export async function redeemByCodeForMerchant({
     return { ok: false, status, error };
   };
 
-  if (redeem.status !== "active") {
-    return logFailure("inactive_code", 400, "Invalid, expired, or already redeemed code");
+  if (!redeem) {
+    return logFailure("not_found", 404, "Code not found");
   }
 
   if (redeem.validTo) {
@@ -234,35 +207,20 @@ export async function redeemByCodeForMerchant({
           merchantId,
           redeemCodes: {
             $elemMatch: {
+              codeKey: key,
               status: "active",
               ...(purpose ? { purpose } : {}),
-              $or: [
-                { codeKey: key },
-                { code: { $in: [input, inputAlnum] } },
-              ],
               validTo: redeem.validTo,
             },
           },
         },
         {
           $set: {
-            "redeemCodes.$[rc].status": "expired",
-            "redeemCodes.$[rc].expiredAt": now,
+            "redeemCodes.$.status": "expired",
+            "redeemCodes.$.expiredAt": now,
           },
         },
-        {
-          arrayFilters: [
-            {
-              "rc.status": "active",
-              ...(purpose ? { "rc.purpose": purpose } : {}),
-              $or: [
-                { "rc.codeKey": key },
-                { "rc.code": { $in: [input, inputAlnum] } },
-              ],
-              "rc.validTo": redeem.validTo,
-            },
-          ],
-        }
+        { new: true }
       );
 
       return logFailure("expired", 410, "Code expired");
@@ -273,46 +231,28 @@ export async function redeemByCodeForMerchant({
     return logFailure("no_rewards", 400, "No rewards available");
   }
 
-  const validDateFilter = [
-    { validTo: { $exists: false } },
-    { validTo: null },
-    { validTo: { $gt: now } },
-  ];
-
-  const arrayValidDateFilter = [
-    { "rc.validTo": { $exists: false } },
-    { "rc.validTo": null },
-    { "rc.validTo": { $gt: now } },
-  ];
-
-  const codeMatchFilter = [
-    { codeKey: key },
-    { code: { $in: [input, inputAlnum] } },
-  ];
-
-  const arrayCodeMatchFilter = [
-    { "rc.codeKey": key },
-    { "rc.code": { $in: [input, inputAlnum] } },
-  ];
-
   const updateQuery = {
     _id: card._id,
     merchantId,
-    ...(purpose === "reward" ? { rewards: { $gte: 1 } } : {}),
+    ...(purpose === "reward" ? { rewards: { $gt: 0 } } : {}),
     redeemCodes: {
       $elemMatch: {
+        codeKey: key,
         status: "active",
         ...(purpose ? { purpose } : {}),
-        $and: [{ $or: codeMatchFilter }, { $or: validDateFilter }],
+        ...(redeem.validTo
+          ? { validTo: redeem.validTo }
+          : { $or: [{ validTo: { $exists: false } }, { validTo: null }, { validTo: { $gt: now } }] }),
       },
     },
   };
 
   const updateDoc = {
     $set: {
-      "redeemCodes.$[rc].status": "redeemed",
-      "redeemCodes.$[rc].redeemedAt": now,
-      "redeemCodes.$[rc].redeemedBy": merchantId,
+      "redeemCodes.$.status": "used",
+      "redeemCodes.$.redeemedAt": now,
+      "redeemCodes.$.updatedAt": now,
+      "redeemCodes.$.meta.redeemedBy": merchantId,
       lastEventAt: now,
     },
   };
@@ -321,29 +261,17 @@ export async function redeemByCodeForMerchant({
     updateDoc.$inc = { rewards: -1 };
   }
 
-  const updatedCard = await Card.findOneAndUpdate(updateQuery, updateDoc, {
-    new: true,
-    arrayFilters: [
-      {
-        "rc.status": "active",
-        ...(purpose ? { "rc.purpose": purpose } : {}),
-        $and: [{ $or: arrayCodeMatchFilter }, { $or: arrayValidDateFilter }],
-      },
-    ],
-  });
+  const updatedCard = await Card.findOneAndUpdate(updateQuery, updateDoc, { new: true }).lean();
+
+  console.log("REDEEM_ATOMIC", { key, ok: Boolean(updatedCard) });
 
   if (!updatedCard) {
-    console.warn(
-      `redeemByCodeForMerchant: no document updated for merchant ${merchantId}, code ${input}`
-    );
-    return logFailure("concurrent_or_inactive", 409, "Code already used or invalid");
+    return { ok: false, status: 409, error: "Code already used or invalid" };
   }
 
-  console.info(
-    `redeemByCodeForMerchant: updated card ${updatedCard._id} for merchant ${merchantId}, code ${input}`
+  const updatedRedeem = (updatedCard.redeemCodes || []).find(
+    (rc) => normCodeKey(rc?.codeKey ?? rc?.code) === key
   );
-
-  await ensureCardHasScanCode(updatedCard);
 
   if (purpose === "reward") {
     await CardEvent.create(
@@ -356,7 +284,7 @@ export async function redeemByCodeForMerchant({
         cardType: updatedCard.type ?? "stamps",
         templateId: updatedCard.templateId ?? null,
         actor: { type: "merchant", actorId, source },
-        payload: { code: input, codeKey: key, purpose: "reward" },
+        payload: { code, codeKey: key, purpose: "reward" },
       })
     );
 
@@ -365,8 +293,8 @@ export async function redeemByCodeForMerchant({
       status: 200,
       card: updatedCard,
       purpose: "reward",
-      code: input,
-      meta: null,
+      code,
+      meta: updatedRedeem?.meta ?? null,
     };
   }
 
@@ -381,10 +309,10 @@ export async function redeemByCodeForMerchant({
         templateId: updatedCard.templateId ?? null,
         actor: { type: "merchant", actorId, source },
         payload: {
-          code: input,
+          code,
           codeKey: key,
           purpose: "coupon",
-          meta: redeem.meta ?? null,
+          meta: updatedRedeem?.meta ?? null,
         },
       })
     );
@@ -394,11 +322,10 @@ export async function redeemByCodeForMerchant({
       status: 200,
       card: updatedCard,
       purpose: "coupon",
-      code: input,
-      meta: redeem.meta ?? null,
+      code,
+      meta: updatedRedeem?.meta ?? null,
     };
   }
 
   return logFailure("unsupported_purpose", 409, "Redeem purpose not supported");
-
 }
