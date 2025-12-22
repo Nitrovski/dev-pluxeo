@@ -16,8 +16,10 @@ const DEV_DEFAULT_LOGO_URL =
   "https://storage.googleapis.com/wallet-lab-tools-codelab-artifacts/LoyaltyClass/loyalty_class_logo.png";
 const MAX_TEXT_MODULES = 4;
 const PROMO_MAX_LENGTH = 60;
+const GENERIC_PROMO_MAX_LENGTH = 40;
 const MAX_BARCODE_LENGTH = 120;
 const FALLBACK_IMAGE_URL = "https://www.pluxeo.com/logo.png";
+const GENERIC_CLASS_PREFIX_SUFFIX = "_generic";
 
 function normBarcodeValue(v) {
   return String(v ?? "")
@@ -155,6 +157,18 @@ function sanitizePromoText(rawPromoText) {
   return promoText || null;
 }
 
+function sanitizeGenericPromoText(rawPromoText) {
+  const collapsed = String(rawPromoText ?? "").replace(/\s+/g, " ").trim();
+
+  if (!collapsed) return null;
+
+  if (collapsed.length > GENERIC_PROMO_MAX_LENGTH) {
+    return `${collapsed.slice(0, GENERIC_PROMO_MAX_LENGTH - 1).trimEnd()}…`;
+  }
+
+  return collapsed;
+}
+
 function sanitizeLinks(links) {
   if (!Array.isArray(links)) return [];
 
@@ -233,6 +247,39 @@ function buildTextModuleTemplate(index) {
     },
     secondValue: {
       fields: [{ fieldPath: `object.textModulesData[${index}].body` }],
+    },
+  };
+}
+
+function buildGenericClassTemplateInfo(fieldCount = 0) {
+  const rows = [];
+  const normalizedCount = Math.max(1, fieldCount);
+
+  for (let idx = 0; idx < normalizedCount; idx += 2) {
+    const startIndex = idx;
+    const endIndex = idx + 1;
+
+    rows.push({
+      twoItems: {
+        startItem: buildTextModuleTemplate(startIndex),
+        endItem: buildTextModuleTemplate(endIndex),
+      },
+    });
+  }
+
+  return {
+    cardTemplateOverride: {
+      cardBarcodeSectionDetails: {
+        renderedBarcodes: [
+          {
+            templateItem: {
+              firstValue: { fields: [{ fieldPath: "object.barcode" }] },
+            },
+            showCodeText: true,
+          },
+        ],
+      },
+      cardRowTemplateInfos: rows,
     },
   };
 }
@@ -357,6 +404,200 @@ function buildObjectLinksModuleData(template) {
   uris.push(...linksModuleUris);
 
   return uris.length > 0 ? { uris } : null;
+}
+
+function buildGenericFrontFields({ card, template }) {
+  const cfg = template?.wallet?.google?.genericConfig || {};
+  const fields = [];
+
+  if (cfg.showPromo) {
+    const promoText = sanitizeGenericPromoText(template?.promoText);
+    if (promoText) {
+      fields.push({ id: "promo", header: "AKCE", body: promoText });
+    }
+  }
+
+  if (cfg.showStampsModule) {
+    fields.push({ id: "stamps", header: "Razítka", body: String(card?.stamps ?? 0) });
+    fields.push({ id: "rewards", header: "Odměny", body: String(card?.rewards ?? 0) });
+  }
+
+  if (cfg.showWebsite && template?.websiteUrl) {
+    const normalizedWebsite = normalizeWebsiteUrl(template?.websiteUrl) || String(template?.websiteUrl).trim();
+    if (normalizedWebsite) {
+      fields.push({ id: "website", header: "Web", body: normalizedWebsite });
+    }
+  }
+
+  if (cfg.showOpeningHours && template?.openingHours) {
+    const openingHours = String(template?.openingHours || "").trim();
+    if (openingHours) {
+      fields.push({ id: "opening_hours", header: "Otevírací doba", body: openingHours });
+    }
+  }
+
+  if (cfg.showEmail && (template?.email || template?.contactEmail)) {
+    const email = String(template?.email || template?.contactEmail || "").trim();
+    if (email) {
+      fields.push({ id: "email", header: "Email", body: email });
+    }
+  }
+
+  if (cfg.showTier) {
+    const tierValue = String(card?.tier || card?.level || template?.tier || "").trim();
+    if (tierValue) {
+      fields.push({ id: "tier", header: "Tier", body: tierValue });
+    }
+  }
+
+  return fields;
+}
+
+function estimateGenericFieldCount(template) {
+  const cfg = template?.wallet?.google?.genericConfig || {};
+  let count = 0;
+
+  if (cfg.showPromo && sanitizeGenericPromoText(template?.promoText)) {
+    count += 1;
+  }
+
+  if (cfg.showStampsModule) {
+    count += 2;
+  }
+
+  if (cfg.showWebsite && normalizeWebsiteUrl(template?.websiteUrl)) {
+    count += 1;
+  }
+
+  if (cfg.showOpeningHours && String(template?.openingHours || "").trim()) {
+    count += 1;
+  }
+
+  if (cfg.showEmail && String(template?.email || template?.contactEmail || "").trim()) {
+    count += 1;
+  }
+
+  if (cfg.showTier) {
+    count += 1;
+  }
+
+  return Math.max(1, count);
+}
+
+async function buildGenericClassPayload({ classId, customer, template }) {
+  const walletGoogle = template?.wallet?.google || {};
+  const issuerName =
+    (walletGoogle.issuerName || customer?.name || "").trim() || DEFAULT_PROGRAM_NAME;
+  const programName =
+    (walletGoogle.programName || template?.programName || customer?.name || "")
+      .trim() || DEFAULT_PROGRAM_NAME;
+  const primaryColor =
+    walletGoogle.backgroundColor?.trim() ||
+    template?.primaryColor?.trim() ||
+    DEFAULT_PRIMARY_COLOR;
+
+  const { original: logoUrlOriginal, normalized: logoUrlCandidate } = normalizeImageUrl(
+    walletGoogle.logoUrl
+  );
+  const { original: heroImageOriginal, normalized: heroImageCandidate } = normalizeImageUrl(
+    walletGoogle.heroImageUrl
+  );
+
+  const isLogoCandidateValid =
+    isValidHttpsUrl(logoUrlCandidate) && !containsQuoteCharacters(logoUrlCandidate);
+
+  if (!isLogoCandidateValid && (logoUrlOriginal || logoUrlCandidate)) {
+    console.warn("GW_IMAGE_SANITIZED", {
+      field: "logoUrl",
+      original: logoUrlOriginal,
+      sanitized: logoUrlCandidate,
+    });
+  }
+
+  if (heroImageOriginal || heroImageCandidate) {
+    console.warn("GW_IMAGE_SANITIZED", {
+      field: "heroImageUrl",
+      original: heroImageOriginal,
+      sanitized: heroImageCandidate,
+    });
+  }
+
+  const logoUrl = await validateImageUrlOrFallback(
+    isLogoCandidateValid ? logoUrlCandidate : resolveDefaultLogoUrl()
+  );
+  const heroImageUrl = await validateImageUrlOrFallback(heroImageCandidate);
+
+  const classTemplateInfo = buildGenericClassTemplateInfo(
+    estimateGenericFieldCount(template)
+  );
+
+  const payload = {
+    id: classId,
+    issuerName,
+    reviewStatus: "UNDER_REVIEW",
+    logo: {
+      sourceUri: { uri: logoUrl },
+    },
+    hexBackgroundColor: primaryColor,
+    classTemplateInfo,
+  };
+
+  if (heroImageUrl) {
+    payload.heroImage = { sourceUri: { uri: heroImageUrl } };
+  }
+
+  payload.cardTitle = {
+    defaultValue: { language: "cs", value: programName },
+  };
+
+  return payload;
+}
+
+function buildGenericObjectPayload({
+  objectId,
+  classId,
+  barcodeValue,
+  textModulesData,
+  template,
+}) {
+  const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
+
+  const walletGoogle = template?.wallet?.google || {};
+  const programName =
+    (walletGoogle.programName || template?.programName || "").trim() || DEFAULT_PROGRAM_NAME;
+  const headline = String(template?.headline || "").trim();
+  const subheadline = String(template?.subheadline || "").trim();
+
+  const payload = {
+    id: objectId,
+    classId,
+    state: "ACTIVE",
+    cardTitle: {
+      defaultValue: { language: "cs", value: programName },
+    },
+  };
+
+  if (headline) {
+    payload.header = { defaultValue: { language: "cs", value: headline } };
+  }
+
+  if (subheadline) {
+    payload.subheader = { defaultValue: { language: "cs", value: subheadline } };
+  }
+
+  if (normalizedBarcodeValue) {
+    payload.barcode = {
+      type: "QR_CODE",
+      value: normalizedBarcodeValue,
+      alternateText: "Pluxeo",
+    };
+  }
+
+  if (Array.isArray(textModulesData) && textModulesData.length > 0) {
+    payload.textModulesData = textModulesData;
+  }
+
+  return payload;
 }
 
 function extractClassDebugFields(loyaltyClass) {
@@ -779,9 +1020,82 @@ export async function ensureGenericClassForMerchant({
   forcePatch = false,
   template,
 }) {
-  const error = new Error("Generic Google Wallet passes are not implemented yet");
-  error.statusCode = 501;
-  throw error;
+  if (!merchantId) {
+    throw new Error("merchantId is required");
+  }
+
+  const customer = await Customer.findOne({ merchantId });
+  if (!customer) {
+    throw new Error("Customer not found for this merchant");
+  }
+
+  const templateDoc = template || (await CardTemplate.findOne({ merchantId }).lean());
+  const classPrefix = `${googleWalletConfig.classPrefix}${GENERIC_CLASS_PREFIX_SUFFIX}`;
+
+  const classId = makeClassId({
+    issuerId: googleWalletConfig.issuerId,
+    classPrefix,
+    merchantId,
+  });
+
+  const genericClass = await buildGenericClassPayload({
+    classId,
+    customer,
+    template: templateDoc,
+  });
+
+  let existed = false;
+
+  const handleWalletError = (err) => {
+    if (isGoogleWalletBadRequest(err) && googleWalletConfig.isDevEnv) {
+      console.warn(
+        "GW_GENERIC_CLASS_SYNC_ERROR",
+        classId,
+        err?.responseBody?.error?.message
+      );
+    }
+
+    throw err;
+  };
+
+  try {
+    await walletRequest({
+      method: "GET",
+      path: `/walletobjects/v1/genericClass/${classId}`,
+    });
+
+    existed = true;
+
+    if (forcePatch) {
+      try {
+        await walletRequest({
+          method: "PATCH",
+          path: `/walletobjects/v1/genericClass/${classId}`,
+          body: genericClass,
+        });
+      } catch (err) {
+        handleWalletError(err);
+      }
+    }
+  } catch (err) {
+    if (err?.status !== 404) {
+      handleWalletError(err);
+    }
+
+    try {
+      await walletRequest({
+        method: "POST",
+        path: "/walletobjects/v1/genericClass",
+        body: genericClass,
+      });
+    } catch (createErr) {
+      handleWalletError(createErr);
+    }
+  }
+
+  await persistClassId(customer, classId);
+
+  return { classId, existed };
 }
 
 export async function ensureGenericObjectForCard({
@@ -790,9 +1104,79 @@ export async function ensureGenericObjectForCard({
   forcePatch = false,
   template,
 }) {
-  const error = new Error("Generic Google Wallet passes are not implemented yet");
-  error.statusCode = 501;
-  throw error;
+  if (!merchantId) {
+    throw new Error("merchantId is required");
+  }
+
+  if (!cardId) {
+    throw new Error("cardId is required");
+  }
+
+  const cardDoc = await Card.findById(cardId);
+  if (!cardDoc) {
+    throw new Error("Card not found");
+  }
+
+  if (String(cardDoc.merchantId) !== String(merchantId)) {
+    throw new Error("Card does not belong to merchant");
+  }
+
+  const templateDoc = template || (await CardTemplate.findOne({ merchantId }).lean());
+
+  const { classId } = await ensureGenericClassForMerchant({
+    merchantId,
+    forcePatch,
+    template: templateDoc,
+  });
+
+  const objectId = makeObjectId({
+    issuerId: googleWalletConfig.issuerId,
+    cardId,
+  });
+
+  const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
+  const textModulesData = buildGenericFrontFields({ card: cardDoc, template: templateDoc });
+  const genericObjectPayload = buildGenericObjectPayload({
+    objectId,
+    classId,
+    barcodeValue,
+    textModulesData,
+    template: templateDoc,
+  });
+
+  let existed = false;
+
+  try {
+    await walletRequest({
+      method: "GET",
+      path: `/walletobjects/v1/genericObject/${objectId}`,
+    });
+
+    existed = true;
+
+    await walletRequest({
+      method: "PATCH",
+      path: `/walletobjects/v1/genericObject/${objectId}`,
+      body: genericObjectPayload,
+    });
+  } catch (err) {
+    if (err?.status !== 404) {
+      throw err;
+    }
+
+    await walletRequest({
+      method: "POST",
+      path: "/walletobjects/v1/genericObject",
+      body: genericObjectPayload,
+    });
+  }
+
+  cardDoc.googleWallet = cardDoc.googleWallet || {};
+  cardDoc.googleWallet.objectId = objectId;
+  cardDoc.googleWallet.passType = "generic";
+  await cardDoc.save();
+
+  return { objectId, classId, existed };
 }
 
 function resolveDesiredPassType(cardDoc, template) {
