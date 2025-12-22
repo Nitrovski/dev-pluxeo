@@ -232,11 +232,35 @@ export async function merchantWalletGoogleRoutes(fastify) {
       const card = await Card.findOne({ _id: cardId, merchantId });
       if (!card) return reply.code(404).send({ error: "Card not found" });
 
-      const { url, classId, objectId } = await createAddToWalletLinkForCard(cardId);
+      const template = await CardTemplate.findOne({ merchantId }).lean();
+      const googleWalletEnabled = Boolean(template?.wallet?.google?.enabled);
+      const requestedPassType = template?.wallet?.google?.passType || "loyalty";
 
-      return reply.send({ url, classId, objectId });
+      const { url, classId, objectId, passType } = await createAddToWalletLinkForCard(
+        cardId,
+        { templateOverride: template, logger: request.log }
+      );
+
+      request.log?.info?.(
+        {
+          merchantId,
+          cardId: card._id,
+          passType,
+          requestedPassType,
+          googleWalletEnabled,
+          classId,
+          objectId,
+          hasUrl: Boolean(url),
+        },
+        "create add to wallet link success"
+      );
+
+      return reply.send({ url, classId, objectId, passType });
     } catch (err) {
-      request.log?.error?.(err, "create add to wallet link failed");
+      request.log?.error?.(
+        { err, responseBody: err?.responseBody, stack: err?.stack },
+        "create add to wallet link failed"
+      );
       if (trySendGoogleWalletBadRequest(reply, err)) return;
 
       return reply.code(500).send({ error: err?.message || "Failed to create link" });
