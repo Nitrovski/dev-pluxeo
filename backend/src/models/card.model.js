@@ -89,6 +89,11 @@ const CardSchema = new Schema(
       type: new Schema(
         {
           objectId: { type: String, default: null },
+          passType: {
+            type: String,
+            enum: ["loyalty", "generic"],
+            default: null,
+          },
         },
         { _id: false }
       ),

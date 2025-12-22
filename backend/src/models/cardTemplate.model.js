@@ -76,11 +76,25 @@ const CardTemplateSchema = new Schema(
     wallet: {
       google: {
         enabled: { type: Boolean, default: false },
+        passType: {
+          type: String,
+          enum: ["loyalty", "generic"],
+          default: "loyalty",
+        },
         issuerName: { type: String, default: "" },
         programName: { type: String, default: "" },
         logoUrl: { type: String, default: "" },
         backgroundColor: { type: String, default: "" },
         heroImageUrl: { type: String, default: "" },
+        genericConfig: {
+          enabled: { type: Boolean, default: false },
+          showStampsModule: { type: Boolean, default: true },
+          showPromo: { type: Boolean, default: true },
+          showWebsite: { type: Boolean, default: false },
+          showOpeningHours: { type: Boolean, default: false },
+          showEmail: { type: Boolean, default: false },
+          showTier: { type: Boolean, default: false },
+        },
         links: [
           {
             uri: { type: String, default: "" },

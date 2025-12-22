@@ -39,6 +39,7 @@ function createConcurrencyQueue(limit, items, handler) {
 function toApi(template, merchantId) {
   // vracme tvar, kter FE ocekv (CardTemplatePage)
   const walletGoogle = template?.wallet?.google || {};
+  const genericConfig = walletGoogle.genericConfig || {};
 
   return {
     merchantId,
@@ -63,11 +64,27 @@ function toApi(template, merchantId) {
     wallet: {
       google: {
         enabled: Boolean(walletGoogle.enabled),
+        passType: walletGoogle.passType || "loyalty",
         issuerName: walletGoogle.issuerName || "",
         programName: walletGoogle.programName || "",
         logoUrl: walletGoogle.logoUrl || "",
         backgroundColor: walletGoogle.backgroundColor || "",
         heroImageUrl: walletGoogle.heroImageUrl || "",
+        genericConfig: {
+          enabled: Boolean(genericConfig.enabled),
+          showStampsModule:
+            genericConfig.showStampsModule !== undefined
+              ? Boolean(genericConfig.showStampsModule)
+              : true,
+          showPromo:
+            genericConfig.showPromo !== undefined
+              ? Boolean(genericConfig.showPromo)
+              : true,
+          showWebsite: Boolean(genericConfig.showWebsite),
+          showOpeningHours: Boolean(genericConfig.showOpeningHours),
+          showEmail: Boolean(genericConfig.showEmail),
+          showTier: Boolean(genericConfig.showTier),
+        },
         links: Array.isArray(walletGoogle.links)
           ? walletGoogle.links.map((link) => ({
               uri: link?.uri || "",
@@ -216,6 +233,27 @@ async function cardTemplateRoutes(fastify, options) {
             if (walletGoogle.enabled !== undefined) {
               $set["wallet.google.enabled"] = Boolean(walletGoogle.enabled);
             }
+            let normalizedGenericConfig;
+            if (walletGoogle.genericConfig !== undefined) {
+              const genericConfigPayload = walletGoogle.genericConfig || {};
+              normalizedGenericConfig = {
+                enabled: Boolean(genericConfigPayload.enabled),
+                showStampsModule:
+                  genericConfigPayload.showStampsModule !== undefined
+                    ? Boolean(genericConfigPayload.showStampsModule)
+                    : true,
+                showPromo:
+                  genericConfigPayload.showPromo !== undefined
+                    ? Boolean(genericConfigPayload.showPromo)
+                    : true,
+                showWebsite: Boolean(genericConfigPayload.showWebsite),
+                showOpeningHours: Boolean(genericConfigPayload.showOpeningHours),
+                showEmail: Boolean(genericConfigPayload.showEmail),
+                showTier: Boolean(genericConfigPayload.showTier),
+              };
+
+              $set["wallet.google.genericConfig"] = normalizedGenericConfig;
+            }
             if (walletGoogle.issuerName !== undefined) {
               $set["wallet.google.issuerName"] = pickString(
                 walletGoogle.issuerName,
@@ -245,6 +283,18 @@ async function cardTemplateRoutes(fastify, options) {
                 walletGoogle.heroImageUrl,
                 ""
               );
+            }
+            if (
+              walletGoogle.passType !== undefined ||
+              normalizedGenericConfig !== undefined
+            ) {
+              const isGenericEnabled = normalizedGenericConfig?.enabled === true;
+              const requestedPassType = walletGoogle.passType;
+              const passType =
+                isGenericEnabled && requestedPassType === "generic"
+                  ? "generic"
+                  : "loyalty";
+              $set["wallet.google.passType"] = passType;
             }
             if (walletGoogle.links !== undefined) {
               const links = Array.isArray(walletGoogle.links)
