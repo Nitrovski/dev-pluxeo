@@ -1299,13 +1299,29 @@ export async function ensureLoyaltyObjectForWalletToken({ walletToken }) {
   });
 }
 
-export function buildAddToGoogleWalletUrl({ classId, objectId }) {
+export function buildAddToGoogleWalletUrl({
+  classId,
+  objectId,
+  passType = "loyalty",
+  logger = null,
+}) {
   if (!objectId) {
     throw new Error("objectId is required");
   }
 
   if (!classId) {
     throw new Error("classId is required for Save to Google Wallet");
+  }
+
+  let payloadKey = "loyaltyObjects";
+
+  if (passType === "generic") {
+    payloadKey = "genericObjects";
+  } else if (passType !== "loyalty") {
+    logger?.warn?.(
+      { passType },
+      "unsupported Google Wallet passType, falling back to loyalty"
+    );
   }
 
   const serviceAccount = loadGoogleWalletServiceAccount();
@@ -1315,7 +1331,7 @@ export function buildAddToGoogleWalletUrl({ classId, objectId }) {
     aud: "google",
     typ: "savetowallet",
     payload: {
-      loyaltyObjects: [
+      [payloadKey]: [
         {
           id: objectId,
           classId,
@@ -1329,6 +1345,7 @@ export function buildAddToGoogleWalletUrl({ classId, objectId }) {
       classId,
       objectId,
       claims,
+      passType,
     });
   }
 
@@ -1337,10 +1354,12 @@ export function buildAddToGoogleWalletUrl({ classId, objectId }) {
   return `https://pay.google.com/gp/v/save/${token}`;
 }
 
-export async function createAddToWalletLinkForCard(cardId) {
+export async function createAddToWalletLinkForCard(cardId, options = {}) {
   if (!cardId) {
     throw new Error("cardId is required");
   }
+
+  const { templateOverride = null, logger = null } = options;
 
   const card = await Card.findById(cardId);
 
@@ -1348,18 +1367,29 @@ export async function createAddToWalletLinkForCard(cardId) {
     throw new Error("Card not found");
   }
 
-  const { classId } = await ensureLoyaltyClassForMerchant({
-    merchantId: card.merchantId,
-  });
+  const template =
+    templateOverride || (await CardTemplate.findOne({ merchantId: card.merchantId }).lean());
+  const googleWalletEnabled = Boolean(template?.wallet?.google?.enabled);
 
-  const { objectId } = await ensureLoyaltyObjectForCard({
+  const { classId, objectId, passType } = await ensureGooglePassForCard({
     merchantId: card.merchantId,
     cardId,
+    templateOverride: template,
   });
 
-  const url = buildAddToGoogleWalletUrl({ classId, objectId });
+  const url = buildAddToGoogleWalletUrl({
+    classId,
+    objectId,
+    passType,
+    logger,
+  });
 
-  return { url, classId, objectId };
+  logger?.info?.(
+    { merchantId: card.merchantId, cardId, passType, classId, objectId, googleWalletEnabled },
+    "Google Wallet add-to-wallet link generated"
+  );
+
+  return { url, classId, objectId, passType };
 }
 
 export async function syncGoogleWalletObject(cardId, logger = null) {
