@@ -140,14 +140,15 @@ export async function redeemByCodeForMerchant({
 }) {
   // --- safe normalizace (aby nikdy nepadla 500) ---
   const raw = String(code || "");
-  const input = raw.trim().toUpperCase();
+  const rawWithoutPrefix = raw.replace(/^PXR:/i, "");
+  const input = normCode(rawWithoutPrefix);
   const inputAlnum = input.replace(/[^A-Z0-9]/g, "");
 
   // safe codeKey()  pokud tvoje codeKey() nekdy throwne, tak to chytíme
   let key = null;
   try {
     // pokud má codeKey helper, pouij ho
-    key = codeKey(raw);
+    key = codeKey(rawWithoutPrefix);
   } catch (e) {
     key = null;
   }
@@ -234,6 +235,7 @@ export async function redeemByCodeForMerchant({
           redeemCodes: {
             $elemMatch: {
               status: "active",
+              ...(purpose ? { purpose } : {}),
               $or: [
                 { codeKey: key },
                 { code: { $in: [input, inputAlnum] } },
@@ -244,18 +246,20 @@ export async function redeemByCodeForMerchant({
         },
         {
           $set: {
-            "redeemCodes.$[target].status": "expired",
-            "redeemCodes.$[target].expiredAt": now,
+            "redeemCodes.$[rc].status": "expired",
+            "redeemCodes.$[rc].expiredAt": now,
           },
         },
         {
           arrayFilters: [
             {
-              "target.status": "active",
+              "rc.status": "active",
+              ...(purpose ? { "rc.purpose": purpose } : {}),
               $or: [
-                { "target.codeKey": key },
-                { "target.code": { $in: [input, inputAlnum] } },
+                { "rc.codeKey": key },
+                { "rc.code": { $in: [input, inputAlnum] } },
               ],
+              "rc.validTo": redeem.validTo,
             },
           ],
         }
@@ -270,14 +274,25 @@ export async function redeemByCodeForMerchant({
   }
 
   const validDateFilter = [
-    { "target.validTo": { $exists: false } },
-    { "target.validTo": null },
-    { "target.validTo": { $gt: now } },
+    { validTo: { $exists: false } },
+    { validTo: null },
+    { validTo: { $gt: now } },
+  ];
+
+  const arrayValidDateFilter = [
+    { "rc.validTo": { $exists: false } },
+    { "rc.validTo": null },
+    { "rc.validTo": { $gt: now } },
   ];
 
   const codeMatchFilter = [
-    { "target.codeKey": key },
-    { "target.code": { $in: [input, inputAlnum] } },
+    { codeKey: key },
+    { code: { $in: [input, inputAlnum] } },
+  ];
+
+  const arrayCodeMatchFilter = [
+    { "rc.codeKey": key },
+    { "rc.code": { $in: [input, inputAlnum] } },
   ];
 
   const updateQuery = {
@@ -287,6 +302,7 @@ export async function redeemByCodeForMerchant({
     redeemCodes: {
       $elemMatch: {
         status: "active",
+        ...(purpose ? { purpose } : {}),
         $and: [{ $or: codeMatchFilter }, { $or: validDateFilter }],
       },
     },
@@ -294,8 +310,9 @@ export async function redeemByCodeForMerchant({
 
   const updateDoc = {
     $set: {
-      "redeemCodes.$[target].status": "redeemed",
-      "redeemCodes.$[target].redeemedAt": now,
+      "redeemCodes.$[rc].status": "redeemed",
+      "redeemCodes.$[rc].redeemedAt": now,
+      "redeemCodes.$[rc].redeemedBy": merchantId,
       lastEventAt: now,
     },
   };
@@ -308,17 +325,25 @@ export async function redeemByCodeForMerchant({
     new: true,
     arrayFilters: [
       {
-        "target.status": "active",
-        $and: [{ $or: codeMatchFilter }, { $or: validDateFilter }],
+        "rc.status": "active",
+        ...(purpose ? { "rc.purpose": purpose } : {}),
+        $and: [{ $or: arrayCodeMatchFilter }, { $or: arrayValidDateFilter }],
       },
     ],
   });
 
-  await ensureCardHasScanCode(updatedCard);
-
   if (!updatedCard) {
-    return logFailure("concurrent_or_inactive", 400, "Invalid, expired, or already redeemed code");
+    console.warn(
+      `redeemByCodeForMerchant: no document updated for merchant ${merchantId}, code ${input}`
+    );
+    return logFailure("concurrent_or_inactive", 409, "Code already used or invalid");
   }
+
+  console.info(
+    `redeemByCodeForMerchant: updated card ${updatedCard._id} for merchant ${merchantId}, code ${input}`
+  );
+
+  await ensureCardHasScanCode(updatedCard);
 
   if (purpose === "reward") {
     await CardEvent.create(
