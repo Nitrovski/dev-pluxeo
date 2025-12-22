@@ -8,7 +8,7 @@ import { issueRedeemCode, redeemByCodeForMerchant } from "../lib/redeemCodes.js"
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { ScanFailureReasons } from "../constants/scanFailureReasons.js";
 import { buildCardEventPayload, buildScanEventPayload } from "../lib/eventSchemas.js";
-import { ensureLoyaltyObjectForCard } from "../lib/googleWalletPass.js";
+import { ensureGooglePassForCard } from "../lib/googleWalletPass.js";
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                            */
@@ -98,7 +98,7 @@ async function syncWalletForCard(cardId, request) {
 
     if (!merchantId) return;
 
-    await ensureLoyaltyObjectForCard({ merchantId, cardId });
+    await ensureGooglePassForCard({ merchantId, cardId });
   } catch (err) {
     request?.log?.warn?.({ err, cardId }, "google wallet ensure failed");
   }

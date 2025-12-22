@@ -774,6 +774,130 @@ export async function ensureLoyaltyObjectForCard({
   return { objectId, classId, existed };
 }
 
+export async function ensureGenericClassForMerchant({
+  merchantId,
+  forcePatch = false,
+  template,
+}) {
+  const error = new Error("Generic Google Wallet passes are not implemented yet");
+  error.statusCode = 501;
+  throw error;
+}
+
+export async function ensureGenericObjectForCard({
+  merchantId,
+  cardId,
+  forcePatch = false,
+  template,
+}) {
+  const error = new Error("Generic Google Wallet passes are not implemented yet");
+  error.statusCode = 501;
+  throw error;
+}
+
+function resolveDesiredPassType(cardDoc, template) {
+  const stickyPassType = cardDoc?.googleWallet?.passType;
+  if (stickyPassType) return stickyPassType;
+
+  const templatePassType = template?.wallet?.google?.passType;
+  const genericEnabled =
+    templatePassType === "generic" &&
+    template?.wallet?.google?.genericConfig?.enabled === true;
+
+  return genericEnabled ? "generic" : "loyalty";
+}
+
+export async function ensureGoogleClassForMerchant({
+  merchantId,
+  templateOverride = null,
+  forcePatch = false,
+}) {
+  if (!merchantId) {
+    throw new Error("merchantId is required");
+  }
+
+  const template =
+    templateOverride || (await CardTemplate.findOne({ merchantId }).lean());
+
+  const passType = resolveDesiredPassType(null, template);
+
+  if (passType === "generic") {
+    const result = await ensureGenericClassForMerchant({
+      merchantId,
+      forcePatch,
+      template,
+    });
+
+    return { ...result, passType };
+  }
+
+  const result = await ensureLoyaltyClassForMerchant({
+    merchantId,
+    forcePatch,
+    template,
+  });
+
+  return { ...result, passType };
+}
+
+export async function ensureGooglePassForCard({
+  merchantId,
+  cardId,
+  templateOverride = null,
+  forcePatch = false,
+}) {
+  if (!merchantId) {
+    throw new Error("merchantId is required");
+  }
+
+  if (!cardId) {
+    throw new Error("cardId is required");
+  }
+
+  const card = await Card.findById(cardId);
+
+  if (!card) {
+    throw new Error("Card not found");
+  }
+
+  const template =
+    templateOverride || (await CardTemplate.findOne({ merchantId }).lean());
+
+  const passType = resolveDesiredPassType(card, template);
+
+  let result;
+
+  if (passType === "generic") {
+    result = await ensureGenericObjectForCard({
+      merchantId,
+      cardId,
+      forcePatch,
+      template,
+    });
+  } else {
+    result = await ensureLoyaltyObjectForCard({ merchantId, cardId, forcePatch });
+  }
+
+  const hasPassType = Boolean(card.googleWallet?.passType);
+  const hasObjectId = Boolean(card.googleWallet?.objectId);
+
+  card.googleWallet = card.googleWallet || {};
+
+  if (!hasPassType) {
+    card.googleWallet.passType = passType;
+  }
+
+  if (!hasObjectId && result?.objectId) {
+    card.googleWallet.objectId = result.objectId;
+  }
+
+  if (!hasPassType || (!hasObjectId && result?.objectId)) {
+    await card.save();
+  }
+
+  return { ...result, passType };
+}
+
 export async function ensureLoyaltyObjectForWalletToken({ walletToken }) {
   if (!walletToken) {
     throw new Error("walletToken is required");
@@ -860,7 +984,7 @@ export async function syncGoogleWalletObject(cardId, logger = null) {
 
     if (!card) return;
 
-    await ensureLoyaltyObjectForCard({
+    await ensureGooglePassForCard({
       merchantId: card.merchantId,
       cardId: card._id,
     });

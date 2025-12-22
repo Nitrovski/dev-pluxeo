@@ -3,8 +3,8 @@ import { googleWalletConfig } from "../config/googleWallet.config.js";
 import { Card } from "../models/card.model.js";
 import {
   createAddToWalletLinkForCard,
-  ensureLoyaltyClassForMerchant,
-  ensureLoyaltyObjectForCard,
+  ensureGoogleClassForMerchant,
+  ensureGooglePassForCard,
 } from "../lib/googleWalletPass.js";
 import {
   buildGoogleWalletErrorResponse,
@@ -259,13 +259,16 @@ export async function merchantWalletGoogleRoutes(fastify) {
 
       const merchantId = userId;
 
-      const { classId } = await ensureLoyaltyClassForMerchant({
+      const { classId, passType } = await ensureGoogleClassForMerchant({
         merchantId,
         forcePatch: true,
       });
 
       if (googleWalletConfig.isDevEnv && request.log && request.log.info) {
-        request.log.info({ merchantId, classId }, "DEV wallet class sync requested");
+        request.log.info(
+          { merchantId, classId, passType },
+          "DEV wallet class sync requested"
+        );
       }
 
       return reply.send({ ok: true, classId });
@@ -297,7 +300,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
         return reply.code(404).send({ error: "Card not found" });
       }
 
-      const { objectId, classId } = await ensureLoyaltyObjectForCard({
+      const { objectId, classId, passType } = await ensureGooglePassForCard({
         merchantId,
         cardId: card._id,
         forcePatch: true,
@@ -305,7 +308,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
 
       if (googleWalletConfig.isDevEnv && request.log && request.log.info) {
         request.log.info(
-          { merchantId, cardId: card._id, objectId, classId },
+          { merchantId, cardId: card._id, objectId, classId, passType },
           "DEV wallet object sync requested"
         );
       }
