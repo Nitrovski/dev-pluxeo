@@ -1,9 +1,11 @@
 import { getAuth } from "@clerk/fastify";
 import { googleWalletConfig } from "../config/googleWallet.config.js";
 import { Card } from "../models/card.model.js";
+import { CardTemplate } from "../models/cardTemplate.model.js";
 import {
   createAddToWalletLinkForCard,
-  ensureGoogleClassForMerchant,
+  ensureGenericClassForMerchant,
+  ensureLoyaltyClassForMerchant,
   ensureGooglePassForCard,
 } from "../lib/googleWalletPass.js";
 import {
@@ -259,19 +261,39 @@ export async function merchantWalletGoogleRoutes(fastify) {
 
       const merchantId = userId;
 
-      const { classId, passType } = await ensureGoogleClassForMerchant({
+      const template = await CardTemplate.findOne({ merchantId }).lean();
+
+      const isGenericEnabled =
+        template?.wallet?.google?.passType === "generic" &&
+        template?.wallet?.google?.genericConfig?.enabled === true;
+      const resolvedPassType = isGenericEnabled ? "generic" : "loyalty";
+
+      const ensureFn =
+        resolvedPassType === "generic"
+          ? ensureGenericClassForMerchant
+          : ensureLoyaltyClassForMerchant;
+
+      const { classId } = await ensureFn({
         merchantId,
         forcePatch: true,
+        template,
+      });
+
+      console.log("GW_SYNC", {
+        kind: "class",
+        passType: resolvedPassType,
+        merchantId,
+        cardId: null,
       });
 
       if (googleWalletConfig.isDevEnv && request.log && request.log.info) {
         request.log.info(
-          { merchantId, classId, passType },
+          { merchantId, classId, passType: resolvedPassType },
           "DEV wallet class sync requested"
         );
       }
 
-      return reply.send({ ok: true, classId });
+      return reply.send({ ok: true, passType: resolvedPassType, classId, synced: true });
     } catch (err) {
       request.log?.error?.(err, "sync wallet class failed");
       if (trySendGoogleWalletBadRequest(reply, err)) return;
@@ -306,6 +328,13 @@ export async function merchantWalletGoogleRoutes(fastify) {
         forcePatch: true,
       });
 
+      console.log("GW_SYNC", {
+        kind: "object",
+        passType,
+        merchantId,
+        cardId: card._id,
+      });
+
       if (googleWalletConfig.isDevEnv && request.log && request.log.info) {
         request.log.info(
           { merchantId, cardId: card._id, objectId, classId, passType },
@@ -313,7 +342,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
         );
       }
 
-      return reply.send({ ok: true, objectId });
+      return reply.send({ ok: true, passTypeUsed: passType, objectId });
     } catch (err) {
       request.log?.error?.(err, "sync wallet object failed");
       if (trySendGoogleWalletBadRequest(reply, err)) return;
