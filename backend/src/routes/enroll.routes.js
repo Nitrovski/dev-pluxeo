@@ -5,6 +5,7 @@ import { CardTemplate } from "../models/cardTemplate.model.js";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
 import { generateScanCode, ensureCardHasScanCode } from "../lib/scanCode.js";
+import { ensureGooglePassForCard } from "../lib/googleWalletPass.js";
 
 function generateWalletToken() {
   return crypto.randomBytes(24).toString("base64url");
@@ -57,6 +58,13 @@ export default async function enrollRoutes(fastify) {
         const programType =
           template?.programType || template?.cardType || "stamps"; // backward compatible
 
+        const walletGoogle = template?.wallet?.google || {};
+        const resolvedPassType =
+          walletGoogle.passType === "generic" &&
+          walletGoogle.genericConfig?.enabled === true
+            ? "generic"
+            : "loyalty";
+
         const stampsPerReward =
           template?.rules?.freeStampsToReward != null
             ? Number(template.rules.freeStampsToReward)
@@ -77,6 +85,7 @@ export default async function enrollRoutes(fastify) {
             walletToken: existing.walletToken,
             merchantName: customer.name,
             cardContent,
+            passTypeIssued: resolvedPassType,
             wallet: {
               apple: { supported: false },
               google: { supported: false },
@@ -101,11 +110,20 @@ export default async function enrollRoutes(fastify) {
             // ? nový programový typ na karte (tohle ti dnes chybí)
             type: programType,
 
+            googleWallet: {
+              passType: resolvedPassType,
+            },
+
             // ? stamps pravidlo pouze pokud je stamps program
             stampsPerReward: programType === "stamps" ? stampsPerReward : undefined,
           };
 
           const card = await Card.create(cardDoc);
+
+          await ensureGooglePassForCard({
+            merchantId: customer.merchantId,
+            cardId: card._id,
+          });
 
           await CardEvent.create(
             buildCardEventPayload({
@@ -141,6 +159,7 @@ export default async function enrollRoutes(fastify) {
             walletToken,
             merchantName: customer.name,
             cardContent,
+            passTypeIssued: resolvedPassType,
             wallet: {
               apple: { supported: false },
               google: { supported: false },
@@ -163,6 +182,7 @@ export default async function enrollRoutes(fastify) {
                 walletToken: card.walletToken,
                 merchantName: customer.name,
                 cardContent,
+                passTypeIssued: resolvedPassType,
                 wallet: {
                   apple: { supported: false },
                   google: { supported: false },
