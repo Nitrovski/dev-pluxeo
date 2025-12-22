@@ -33,10 +33,10 @@ const RedeemCodeSchema = new Schema(
       index: true,
     },
 
-    // active = ceká na uplatnení, redeemed = použito, expired = neplatné
+    // active = ceká na uplatnení, redeemed/used = použito, expired = neplatné
     status: {
       type: String,
-      enum: ["active", "redeemed", "expired"],
+      enum: ["active", "redeemed", "expired", "used"],
       required: true,
       default: "active",
       index: true,
