@@ -1180,15 +1180,16 @@ export async function ensureGenericObjectForCard({
 }
 
 function resolveDesiredPassType(cardDoc, template) {
-  const stickyPassType = cardDoc?.googleWallet?.passType;
-  if (stickyPassType) return stickyPassType;
-
   const templatePassType = template?.wallet?.google?.passType;
   const genericEnabled =
     templatePassType === "generic" &&
     template?.wallet?.google?.genericConfig?.enabled === true;
 
-  return genericEnabled ? "generic" : "loyalty";
+  if (template) {
+    return genericEnabled ? "generic" : "loyalty";
+  }
+
+  return cardDoc?.googleWallet?.passType === "generic" ? "generic" : "loyalty";
 }
 
 export async function ensureGoogleClassForMerchant({
@@ -1262,20 +1263,24 @@ export async function ensureGooglePassForCard({
     result = await ensureLoyaltyObjectForCard({ merchantId, cardId, forcePatch });
   }
 
-  const hasPassType = Boolean(card.googleWallet?.passType);
-  const hasObjectId = Boolean(card.googleWallet?.objectId);
+  const nextPassType = passType || "loyalty";
+  const nextObjectId = result?.objectId || null;
 
   card.googleWallet = card.googleWallet || {};
 
-  if (!hasPassType) {
-    card.googleWallet.passType = passType;
+  const shouldUpdatePassType = card.googleWallet.passType !== nextPassType;
+  const shouldUpdateObjectId =
+    nextObjectId && card.googleWallet.objectId !== nextObjectId;
+
+  if (shouldUpdatePassType) {
+    card.googleWallet.passType = nextPassType;
   }
 
-  if (!hasObjectId && result?.objectId) {
-    card.googleWallet.objectId = result.objectId;
+  if (shouldUpdateObjectId) {
+    card.googleWallet.objectId = nextObjectId;
   }
 
-  if (!hasPassType || (!hasObjectId && result?.objectId)) {
+  if (shouldUpdatePassType || shouldUpdateObjectId) {
     await card.save();
   }
 
