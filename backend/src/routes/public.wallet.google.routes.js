@@ -17,9 +17,10 @@ function trySendGoogleWalletBadRequest(reply, err) {
 }
 
 export async function publicGoogleWalletRoutes(fastify) {
-  // DEV/TEST: public Add-to-Google-Wallet by walletToken
-  fastify.post("/api/public/wallet/google/link", async (request, reply) => {
-    const walletToken = String(request.body?.walletToken || "").trim();
+  const handlePublicWalletLink = async (request, reply) => {
+    const walletTokenSource =
+      request.method === "GET" ? request.query?.walletToken : request.body?.walletToken;
+    const walletToken = String(walletTokenSource || "").trim();
 
     if (!walletToken) {
       return reply.code(400).send({ error: "walletToken is required" });
@@ -100,5 +101,9 @@ export async function publicGoogleWalletRoutes(fastify) {
 
       return reply.code(500).send({ error: "Google Wallet error" });
     }
-  });
+  };
+
+  // DEV/TEST: public Add-to-Google-Wallet by walletToken
+  fastify.get("/api/public/wallet/google/link", handlePublicWalletLink);
+  fastify.post("/api/public/wallet/google/link", handlePublicWalletLink);
 }
