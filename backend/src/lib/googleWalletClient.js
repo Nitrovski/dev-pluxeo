@@ -1,5 +1,4 @@
 import { JWT } from "google-auth-library";
-
 import { loadGoogleWalletServiceAccount } from "./googleWalletAuth.js";
 
 const WALLET_BASE_URL = "https://walletobjects.googleapis.com";
@@ -28,7 +27,20 @@ export async function walletRequest({ method, path, body }) {
 
   console.log("GW_API_REQUEST", { method, path: normalizedPath });
 
-  const authHeaders = await authClient.getRequestHeaders();
+  // ✅ Ensure token is minted
+  await authClient.authorize();
+
+  // ✅ IMPORTANT: pass URL so Authorization header is reliably included
+  const authHeaders = await authClient.getRequestHeaders(url);
+
+  // Dev-only debug: confirm Authorization header exists
+  if (process.env.NODE_ENV !== "production") {
+    const keys = Object.keys(authHeaders || {});
+    const hasAuth = Boolean(authHeaders?.Authorization || authHeaders?.authorization);
+    console.log("GW authHeaders keys:", keys);
+    console.log("GW Authorization present?", hasAuth);
+  }
+
   const headers = {
     ...authHeaders,
     "Content-Type": "application/json",
