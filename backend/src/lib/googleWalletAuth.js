@@ -25,8 +25,12 @@ export function loadGoogleWalletServiceAccount() {
     throw new Error('Service account JSON must have type "service_account"');
   }
 
-  if (!json.client_email || !json.private_key) {
-    throw new Error("Service account JSON must include client_email and private_key");
+  if (!json.client_email) {
+    throw new Error("Service account JSON must include client_email");
+  }
+
+  if (!json.private_key || !json.private_key_id) {
+    throw new Error("Google Wallet credentials missing private_key/private_key_id");
   }
 
   return json;

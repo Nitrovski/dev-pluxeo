@@ -1330,6 +1330,11 @@ export function buildAddToGoogleWalletUrl({
   }
 
   const serviceAccount = loadGoogleWalletServiceAccount();
+  const { private_key: privateKey, private_key_id: privateKeyId } = serviceAccount;
+
+  if (!privateKey || !privateKeyId) {
+    throw new Error("Google Wallet credentials missing private_key/private_key_id");
+  }
 
   const claims = {
     iss: serviceAccount.client_email,
@@ -1354,7 +1359,13 @@ export function buildAddToGoogleWalletUrl({
     });
   }
 
-  const token = jwt.sign(claims, serviceAccount.private_key, { algorithm: "RS256" });
+  const token = jwt.sign(claims, privateKey, {
+    algorithm: "RS256",
+    header: {
+      typ: "JWT",
+      kid: privateKeyId,
+    },
+  });
 
   return `https://pay.google.com/gp/v/save/${token}`;
 }

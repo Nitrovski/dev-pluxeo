@@ -97,6 +97,9 @@ export async function publicGoogleWalletRoutes(fastify) {
         { err, walletToken, cardId: card?._id },
         "create public add to wallet link failed"
       );
+      if (err?.message === "Google Wallet credentials missing private_key/private_key_id") {
+        return reply.code(500).send({ error: err.message });
+      }
       if (trySendGoogleWalletBadRequest(reply, err)) return;
 
       return reply.code(500).send({ error: "Google Wallet error" });
