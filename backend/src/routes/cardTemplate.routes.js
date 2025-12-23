@@ -1,3 +1,4 @@
+// src/routes/cardTemplate.routes.js
 import { CardTemplate } from "../models/cardTemplate.model.js";
 import { Card } from "../models/card.model.js";
 import { getAuth } from "@clerk/fastify";
@@ -17,6 +18,10 @@ function pickNumber(v, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function isObj(v) {
+  return v && typeof v === "object" && !Array.isArray(v);
+}
+
 function createConcurrencyQueue(limit, items, handler) {
   let nextIndex = 0;
 
@@ -31,15 +36,76 @@ function createConcurrencyQueue(limit, items, handler) {
     }
   };
 
-  return Promise.all(
-    Array.from({ length: limit }).map(() => worker())
-  );
+  return Promise.all(Array.from({ length: limit }).map(() => worker()));
+}
+
+/**
+ * Normalize wallet shape so FE never receives wallet: null / invalid.
+ * Also normalizes links to { label, uri } (FE schema expects that).
+ */
+function normalizeWallet(inWallet) {
+  const w = isObj(inWallet) ? inWallet : {};
+
+  const googleIn = isObj(w.google) ? w.google : {};
+  const appleIn = isObj(w.apple) ? w.apple : {};
+
+  const genericConfigIn = isObj(googleIn.genericConfig) ? googleIn.genericConfig : {};
+
+  const google = {
+    enabled: Boolean(googleIn.enabled),
+    passType:
+      googleIn.passType === "generic" || googleIn.passType === "loyalty"
+        ? googleIn.passType
+        : "loyalty",
+    issuerName: pickString(googleIn.issuerName, ""),
+    programName: pickString(googleIn.programName, ""),
+    logoUrl: pickString(googleIn.logoUrl, ""),
+    backgroundColor: pickString(googleIn.backgroundColor, "#FF9900") || "#FF9900",
+    heroImageUrl: pickString(googleIn.heroImageUrl, ""),
+    links: Array.isArray(googleIn.links)
+      ? googleIn.links
+          .filter((x) => isObj(x))
+          .map((link) => ({
+            // FE schema uses: { label, uri }
+            label: pickString(link.label ?? link.description, ""),
+            uri: pickString(link.uri, ""),
+          }))
+      : [],
+    textModules: Array.isArray(googleIn.textModules)
+      ? googleIn.textModules
+          .filter((x) => isObj(x))
+          .map((tm) => ({
+            header: pickString(tm.header, ""),
+            body: pickString(tm.body, ""),
+          }))
+      : [],
+    genericConfig: {
+      enabled: Boolean(genericConfigIn.enabled),
+      showStampsModule:
+        genericConfigIn.showStampsModule !== undefined
+          ? Boolean(genericConfigIn.showStampsModule)
+          : true,
+      showPromo:
+        genericConfigIn.showPromo !== undefined ? Boolean(genericConfigIn.showPromo) : true,
+      showWebsite: Boolean(genericConfigIn.showWebsite),
+      showOpeningHours: Boolean(genericConfigIn.showOpeningHours),
+      showEmail: Boolean(genericConfigIn.showEmail),
+      showTier: Boolean(genericConfigIn.showTier),
+    },
+    // meta fields if present in DB
+    classId: typeof googleIn.classId === "string" ? googleIn.classId : undefined,
+    synced: typeof googleIn.synced === "boolean" ? googleIn.synced : undefined,
+  };
+
+  // apple currently empty object, but keep it stable
+  const apple = isObj(appleIn) ? appleIn : {};
+
+  return { google, apple };
 }
 
 function toApi(template, merchantId) {
-  // vracme tvar, kter FE ocekv (CardTemplatePage)
-  const walletGoogle = template?.wallet?.google || {};
-  const genericConfig = walletGoogle.genericConfig || {};
+  // vracíme tvar, který FE očekává (CardTemplatePage)
+  const wallet = normalizeWallet(template?.wallet);
 
   return {
     merchantId,
@@ -53,7 +119,7 @@ function toApi(template, merchantId) {
     openingHours: template?.openingHours || "",
     websiteUrl: template?.websiteUrl || "",
 
-    // ?? pravidla programu
+    // pravidla programu
     freeStampsToReward: template?.rules?.freeStampsToReward ?? 10,
     couponText: template?.rules?.couponText ?? "",
 
@@ -61,51 +127,13 @@ function toApi(template, merchantId) {
     secondaryColor: template?.secondaryColor || "#111827",
     logoUrl: template?.logoUrl || "",
 
-    wallet: {
-      google: {
-        enabled: Boolean(walletGoogle.enabled),
-        passType: walletGoogle.passType || "loyalty",
-        issuerName: walletGoogle.issuerName || "",
-        programName: walletGoogle.programName || "",
-        logoUrl: walletGoogle.logoUrl || "",
-        backgroundColor: walletGoogle.backgroundColor || "",
-        heroImageUrl: walletGoogle.heroImageUrl || "",
-        genericConfig: {
-          enabled: Boolean(genericConfig.enabled),
-          showStampsModule:
-            genericConfig.showStampsModule !== undefined
-              ? Boolean(genericConfig.showStampsModule)
-              : true,
-          showPromo:
-            genericConfig.showPromo !== undefined
-              ? Boolean(genericConfig.showPromo)
-              : true,
-          showWebsite: Boolean(genericConfig.showWebsite),
-          showOpeningHours: Boolean(genericConfig.showOpeningHours),
-          showEmail: Boolean(genericConfig.showEmail),
-          showTier: Boolean(genericConfig.showTier),
-        },
-        links: Array.isArray(walletGoogle.links)
-          ? walletGoogle.links.map((link) => ({
-              uri: link?.uri || "",
-              description: link?.description || "",
-            }))
-          : [],
-        textModules: Array.isArray(walletGoogle.textModules)
-          ? walletGoogle.textModules.map((tm) => ({
-              header: tm?.header || "",
-              body: tm?.body || "",
-            }))
-          : [],
-      },
-    },
+    wallet,
   };
 }
 
 async function cardTemplateRoutes(fastify, options) {
   /**
    * GET /api/card-template
-   * Vrt ablonu karty pro prihlenho merchanta
    */
   fastify.get("/api/card-template", async (request, reply) => {
     try {
@@ -119,42 +147,50 @@ async function cardTemplateRoutes(fastify, options) {
 
       const template = await CardTemplate.findOne({ merchantId }).lean();
 
-      // pokud ablona neexistuje ? vrtme default
+      // pokud šablona neexistuje -> vrať default
       if (!template) {
-        return reply.send(
-          toApi(
-            {
-              programType: "stamps",
+        const defaultTpl = {
+          programType: "stamps",
+          programName: "",
+          headline: "",
+          subheadline: "",
+          customMessage: "",
+          promoText: "",
+          openingHours: "",
+          websiteUrl: "",
+          rules: {
+            freeStampsToReward: 10,
+            couponText: "",
+          },
+          primaryColor: "#FF9900",
+          secondaryColor: "#111827",
+          logoUrl: "",
+          wallet: {
+            google: {
+              enabled: false,
+              passType: "loyalty",
+              issuerName: "",
               programName: "",
-              headline: "",
-              subheadline: "",
-              customMessage: "",
-              promoText: "",
-              openingHours: "",
-              websiteUrl: "",
-              rules: {
-                freeStampsToReward: 10,
-                couponText: "",
-              },
-              primaryColor: "#FF9900",
-              secondaryColor: "#111827",
               logoUrl: "",
-              wallet: {
-                google: {
-                  enabled: false,
-                  issuerName: "",
-                  programName: "",
-                  logoUrl: "",
-                  backgroundColor: "",
-                  heroImageUrl: "",
-                  links: [],
-                  textModules: [],
-                },
+              backgroundColor: "#FF9900",
+              heroImageUrl: "",
+              links: [],
+              textModules: [],
+              genericConfig: {
+                enabled: false,
+                showStampsModule: true,
+                showPromo: true,
+                showWebsite: false,
+                showOpeningHours: false,
+                showEmail: false,
+                showTier: false,
               },
             },
-            merchantId
-          )
-        );
+            apple: {},
+          },
+        };
+
+        return reply.send(toApi(defaultTpl, merchantId));
       }
 
       return reply.send(toApi(template, merchantId));
@@ -166,7 +202,6 @@ async function cardTemplateRoutes(fastify, options) {
 
   /**
    * PUT /api/card-template
-   * Ulo / aktualizuje ablonu karty pro merchanta
    */
   fastify.put("/api/card-template", async (request, reply) => {
     try {
@@ -178,13 +213,13 @@ async function cardTemplateRoutes(fastify, options) {
 
       const merchantId = userId;
       const payload = request.body || {};
+
+      // NOTE: máš to zapnuté natvrdo – nechávám jak je
       const syncWalletObjects = true;
-
       const syncWalletObjectsLimit = 10;
-
       const syncWalletObjectsConcurrency = 3;
 
-      // whitelist presne podle FE tvaru
+      // whitelist podle FE tvaru
       const update = {
         programType: payload.programType, // "stamps" | "coupon"
         programName: payload.programName,
@@ -198,7 +233,8 @@ async function cardTemplateRoutes(fastify, options) {
         secondaryColor: payload.secondaryColor,
         logoUrl: payload.logoUrl,
 
-        wallet: payload.wallet,
+        // DŮLEŽITÉ: normalizuj wallet, nikdy neukládej null
+        wallet: normalizeWallet(payload.wallet),
 
         rules: {
           freeStampsToReward: payload.freeStampsToReward,
@@ -206,7 +242,7 @@ async function cardTemplateRoutes(fastify, options) {
         },
       };
 
-      // vycisti undefined hodnoty
+      // vyčisti undefined hodnoty
       const $set = { merchantId };
 
       for (const [key, value] of Object.entries(update)) {
@@ -215,10 +251,7 @@ async function cardTemplateRoutes(fastify, options) {
         if (key === "rules") {
           const rules = {};
           if (value.freeStampsToReward !== undefined) {
-            rules.freeStampsToReward = pickNumber(
-              value.freeStampsToReward,
-              10
-            );
+            rules.freeStampsToReward = pickNumber(value.freeStampsToReward, 10);
           }
           if (value.couponText !== undefined) {
             rules.couponText = pickString(value.couponText, "");
@@ -227,96 +260,32 @@ async function cardTemplateRoutes(fastify, options) {
             $set.rules = rules;
           }
         } else if (key === "wallet") {
-          const walletGoogle = value?.google;
+          const wallet = normalizeWallet(value);
 
-          if (walletGoogle && typeof walletGoogle === "object") {
-            if (walletGoogle.enabled !== undefined) {
-              $set["wallet.google.enabled"] = Boolean(walletGoogle.enabled);
-            }
-            let normalizedGenericConfig;
-            if (walletGoogle.genericConfig !== undefined) {
-              const genericConfigPayload = walletGoogle.genericConfig || {};
-              normalizedGenericConfig = {
-                enabled: Boolean(genericConfigPayload.enabled),
-                showStampsModule:
-                  genericConfigPayload.showStampsModule !== undefined
-                    ? Boolean(genericConfigPayload.showStampsModule)
-                    : true,
-                showPromo:
-                  genericConfigPayload.showPromo !== undefined
-                    ? Boolean(genericConfigPayload.showPromo)
-                    : true,
-                showWebsite: Boolean(genericConfigPayload.showWebsite),
-                showOpeningHours: Boolean(genericConfigPayload.showOpeningHours),
-                showEmail: Boolean(genericConfigPayload.showEmail),
-                showTier: Boolean(genericConfigPayload.showTier),
-              };
+          // save google
+          const g = wallet.google;
 
-              $set["wallet.google.genericConfig"] = normalizedGenericConfig;
-            }
-            if (walletGoogle.issuerName !== undefined) {
-              $set["wallet.google.issuerName"] = pickString(
-                walletGoogle.issuerName,
-                ""
-              );
-            }
-            if (walletGoogle.programName !== undefined) {
-              $set["wallet.google.programName"] = pickString(
-                walletGoogle.programName,
-                ""
-              );
-            }
-            if (walletGoogle.logoUrl !== undefined) {
-              $set["wallet.google.logoUrl"] = pickString(
-                walletGoogle.logoUrl,
-                ""
-              );
-            }
-            if (walletGoogle.backgroundColor !== undefined) {
-              $set["wallet.google.backgroundColor"] = pickString(
-                walletGoogle.backgroundColor,
-                ""
-              );
-            }
-            if (walletGoogle.heroImageUrl !== undefined) {
-              $set["wallet.google.heroImageUrl"] = pickString(
-                walletGoogle.heroImageUrl,
-                ""
-              );
-            }
-            if (
-              walletGoogle.passType !== undefined ||
-              normalizedGenericConfig !== undefined
-            ) {
-              const isGenericEnabled = normalizedGenericConfig?.enabled === true;
-              const requestedPassType = walletGoogle.passType;
-              const passType =
-                isGenericEnabled && requestedPassType === "generic"
-                  ? "generic"
-                  : "loyalty";
-              $set["wallet.google.passType"] = passType;
-            }
-            if (walletGoogle.links !== undefined) {
-              const links = Array.isArray(walletGoogle.links)
-                ? walletGoogle.links.map((link) => ({
-                    uri: pickString(link?.uri, ""),
-                    description: pickString(link?.description, ""),
-                  }))
-                : [];
+          $set["wallet.google.enabled"] = Boolean(g.enabled);
+          $set["wallet.google.passType"] = g.passType;
+          $set["wallet.google.issuerName"] = pickString(g.issuerName, "");
+          $set["wallet.google.programName"] = pickString(g.programName, "");
+          $set["wallet.google.logoUrl"] = pickString(g.logoUrl, "");
+          $set["wallet.google.backgroundColor"] = pickString(g.backgroundColor, "#FF9900") || "#FF9900";
+          $set["wallet.google.heroImageUrl"] = pickString(g.heroImageUrl, "");
+          $set["wallet.google.links"] = Array.isArray(g.links) ? g.links : [];
+          $set["wallet.google.textModules"] = Array.isArray(g.textModules) ? g.textModules : [];
+          $set["wallet.google.genericConfig"] = g.genericConfig || {
+            enabled: false,
+            showStampsModule: true,
+            showPromo: true,
+            showWebsite: false,
+            showOpeningHours: false,
+            showEmail: false,
+            showTier: false,
+          };
 
-              $set["wallet.google.links"] = links;
-            }
-            if (walletGoogle.textModules !== undefined) {
-              const textModules = Array.isArray(walletGoogle.textModules)
-                ? walletGoogle.textModules.map((tm) => ({
-                    header: pickString(tm?.header, ""),
-                    body: pickString(tm?.body, ""),
-                  }))
-                : [];
-
-              $set["wallet.google.textModules"] = textModules;
-            }
-          }
+          // save apple (keep stable object)
+          $set["wallet.apple"] = wallet.apple || {};
         } else if (key === "programType") {
           $set.programType = value === "coupon" ? "coupon" : "stamps";
         } else if (key === "promoText") {
@@ -336,6 +305,9 @@ async function cardTemplateRoutes(fastify, options) {
         { new: true, upsert: true }
       ).lean();
 
+      // extra safety: normalize wallet from DB before using/sending
+      template.wallet = normalizeWallet(template.wallet);
+
       const walletSyncResult = {
         classSynced: false,
         classId: null,
@@ -343,6 +315,7 @@ async function cardTemplateRoutes(fastify, options) {
         objectsFailed: 0,
       };
 
+      // sync class (loyalty)
       try {
         const { classId } = await ensureLoyaltyClassForMerchant({
           merchantId,
@@ -356,6 +329,7 @@ async function cardTemplateRoutes(fastify, options) {
         request.log.warn({ err: syncErr }, "google wallet class sync failed");
       }
 
+      // sync objects (loyalty) – poslední X karet
       if (syncWalletObjects) {
         try {
           const cardsToSync = await Card.find({ merchantId })
@@ -385,10 +359,7 @@ async function cardTemplateRoutes(fastify, options) {
             }
           );
         } catch (objectsSyncErr) {
-          request.log.warn(
-            { err: objectsSyncErr },
-            "google wallet objects sync batch failed"
-          );
+          request.log.warn({ err: objectsSyncErr }, "google wallet objects sync batch failed");
         }
       }
 
