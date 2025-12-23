@@ -1,9 +1,5 @@
 import { Card } from "../models/card.model.js";
-import {
-  buildAddToGoogleWalletUrl,
-  ensureLoyaltyClassForMerchant,
-  ensureLoyaltyObjectForCard,
-} from "../lib/googleWalletPass.js";
+import { createAddToWalletLinkForCard } from "../lib/googleWalletPass.js";
 import {
   buildGoogleWalletErrorResponse,
   isGoogleWalletBadRequest,
@@ -36,24 +32,23 @@ export async function publicGoogleWalletRoutes(fastify) {
     }
 
     try {
-      const { classId } = await ensureLoyaltyClassForMerchant({
-        merchantId: card.merchantId,
-      });
-      const { objectId } = await ensureLoyaltyObjectForCard({
-        merchantId: card.merchantId,
-        cardId: card._id,
-      });
+      const { url, classId, objectId, passType } = await createAddToWalletLinkForCard(
+        card._id,
+        { logger: request.log }
+      );
+
+      const payloadKey = passType === "generic" ? "genericObjects" : "loyaltyObjects";
 
       if (googleWalletConfig.isDevEnv) {
         try {
           await walletRequest({
             method: "GET",
-            path: `/walletobjects/v1/loyaltyClass/${classId}`,
+            path: `/walletobjects/v1/${passType}Class/${classId}`,
           });
 
           await walletRequest({
             method: "GET",
-            path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+            path: `/walletobjects/v1/${passType}Object/${objectId}`,
           });
         } catch (verifyErr) {
           if (verifyErr?.status === 403 || verifyErr?.status === 404) {
@@ -72,9 +67,30 @@ export async function publicGoogleWalletRoutes(fastify) {
           throw verifyErr;
         }
       }
-      const url = buildAddToGoogleWalletUrl({ classId, objectId });
+      request.log?.info?.(
+        {
+          walletToken,
+          cardId: card._id,
+          passType,
+          classId,
+          objectId,
+          payloadKey,
+        },
+        "public google wallet link generated"
+      );
 
-      return reply.send({ url, classId, objectId });
+      const response = { url, classId, objectId, passType };
+
+      if (googleWalletConfig.isDevEnv) {
+        response.debug = {
+          effectivePassType: passType,
+          classId,
+          objectId,
+          payloadKey,
+        };
+      }
+
+      return reply.send(response);
     } catch (err) {
       request.log?.error?.(
         { err, walletToken, cardId: card?._id },
