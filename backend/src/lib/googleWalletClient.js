@@ -20,6 +20,24 @@ export function getWalletAuthClient() {
   return walletAuthClient;
 }
 
+// --- DEV helper: safe preview to avoid massive logs / circulars ---
+function safePreview(value, maxLen = 8000) {
+  try {
+    const json = JSON.stringify(value);
+    if (json.length <= maxLen) return value;
+    // If too large, return a truncated string preview
+    return json.slice(0, maxLen) + "…(truncated)";
+  } catch (_err) {
+    // Fallback
+    try {
+      const s = String(value);
+      return s.length <= maxLen ? s : s.slice(0, maxLen) + "…(truncated)";
+    } catch (_err2) {
+      return "[unserializable]";
+    }
+  }
+}
+
 export async function walletRequest({ method, path, body }) {
   const authClient = getWalletAuthClient();
   const normalizedPath = path.startsWith("/") ? path : `/${path}`;
@@ -64,6 +82,21 @@ export async function walletRequest({ method, path, body }) {
     : undefined;
 
   if (!response.ok) {
+    // ✅ DEV-only: show request payload preview on 4xx/5xx
+    // Helps find invalidResource issues like: "header must be set"
+    if (process.env.NODE_ENV !== "production") {
+      const m = String(method || "").toUpperCase();
+      const isWrite = m === "POST" || m === "PUT" || m === "PATCH";
+      if (isWrite) {
+        console.error("GW_API_ERROR_REQUEST_PREVIEW", {
+          method: m,
+          path: normalizedPath,
+          status: response.status,
+          requestBodyPreview: safePreview(body),
+        });
+      }
+    }
+
     const error = new Error(
       `Google Wallet API request failed with status ${response.status}`
     );
