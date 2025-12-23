@@ -136,7 +136,7 @@ function sanitizeTextModules(textModules) {
       header: (tm?.header || "").trim(),
       body: (tm?.body || "").trim(),
     }))
-    .filter((tm) => tm.header || tm.body)
+    .filter((tm) => tm.header && tm.body)
     .slice(0, MAX_TEXT_MODULES);
 }
 
@@ -176,8 +176,41 @@ function sanitizeLinks(links) {
     .map((link) => ({
       uri: (link?.uri || "").trim(),
       description: (link?.description || "").trim(),
+      label: (link?.label || "").trim(),
     }))
-    .filter((link) => isValidHttpsUrl(link.uri));
+    .filter((link) => isValidHttpsUrl(link.uri))
+    .filter((link) => link.description || link.label);
+}
+
+function sanitizeTextModulesData(modules) {
+  return sanitizeTextModules(modules);
+}
+
+function normalizeLinksModuleData(linksModuleData) {
+  if (!linksModuleData?.uris?.length) return null;
+
+  const sanitizedUris = sanitizeLinks(linksModuleData.uris).map((link, idx) => ({
+    uri: link.uri,
+    description: link.label || link.description || `Otevřít odkaz ${idx + 1}`,
+  }));
+
+  return sanitizedUris.length > 0 ? { uris: sanitizedUris } : null;
+}
+
+function logInvalidResourcePayload({ err, label, payload }) {
+  const errorMessage = err?.responseBody?.error?.message || "";
+  const isInvalidResource =
+    isGoogleWalletBadRequest(err) && errorMessage.includes("invalidResource");
+
+  if (!googleWalletConfig.isDevEnv || !isInvalidResource) return;
+
+  const serialized = JSON.stringify(payload ?? {});
+
+  console.warn("GW_INVALID_RESOURCE_PAYLOAD", {
+    label,
+    message: errorMessage,
+    payloadPreview: serialized.slice(0, 1500),
+  });
 }
 
 function normalizeWebsiteUrl(websiteUrl) {
@@ -398,7 +431,7 @@ function buildObjectLinksModuleData(template) {
 
   const linksModuleUris = sanitizeLinks(walletGoogle.links).map((link, idx) => ({
     uri: link.uri,
-    description: link.description || `Otevřít odkaz ${idx + 1}`,
+    description: link.label || link.description || `Otevřít odkaz ${idx + 1}`,
   }));
 
   uris.push(...linksModuleUris);
@@ -593,8 +626,10 @@ function buildGenericObjectPayload({
     };
   }
 
-  if (Array.isArray(textModulesData) && textModulesData.length > 0) {
-    payload.textModulesData = textModulesData;
+  const sanitizedTextModules = sanitizeTextModulesData(textModulesData);
+
+  if (sanitizedTextModules.length > 0) {
+    payload.textModulesData = sanitizedTextModules;
   }
 
   return payload;
@@ -770,12 +805,16 @@ function buildLoyaltyObjectPayload({
     };
   }
 
-  if (Array.isArray(textModulesData) && textModulesData.length > 0) {
-    payload.textModulesData = textModulesData;
+  const sanitizedTextModules = sanitizeTextModulesData(textModulesData);
+
+  if (sanitizedTextModules.length > 0) {
+    payload.textModulesData = sanitizedTextModules;
   }
 
-  if (linksModuleData?.uris?.length > 0) {
-    payload.linksModuleData = linksModuleData;
+  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
+
+  if (sanitizedLinksModule) {
+    payload.linksModuleData = sanitizedLinksModule;
   }
 
   return payload;
@@ -819,7 +858,7 @@ export async function ensureLoyaltyClassForMerchant({
 
   let existed = false;
 
-  const handleWalletError = (err) => {
+  const handleWalletError = (err, payload) => {
     if (isGoogleWalletBadRequest(err) && googleWalletConfig.isDevEnv) {
       console.warn(
         "GW_CLASS_SYNC_ERROR",
@@ -827,6 +866,12 @@ export async function ensureLoyaltyClassForMerchant({
         err?.responseBody?.error?.message
       );
     }
+
+    logInvalidResourcePayload({
+      err,
+      label: "loyaltyClass",
+      payload,
+    });
 
     throw err;
   };
@@ -854,12 +899,12 @@ export async function ensureLoyaltyClassForMerchant({
           body: loyaltyClass,
         });
       } catch (err) {
-        handleWalletError(err);
+        handleWalletError(err, loyaltyClass);
       }
     }
   } catch (err) {
     if (err?.status !== 404) {
-      handleWalletError(err);
+      handleWalletError(err, loyaltyClass);
     }
 
     if (googleWalletConfig.isDevEnv) {
@@ -877,7 +922,7 @@ export async function ensureLoyaltyClassForMerchant({
         body: loyaltyClass,
       });
     } catch (createErr) {
-      handleWalletError(createErr);
+      handleWalletError(createErr, loyaltyClass);
     }
   }
 
@@ -980,6 +1025,15 @@ export async function ensureLoyaltyObjectForCard({
   }
 
   let existed = false;
+  const handleWalletError = (err, payload) => {
+    logInvalidResourcePayload({
+      err,
+      label: "loyaltyObject",
+      payload,
+    });
+
+    throw err;
+  };
 
   try {
     await walletRequest({
@@ -989,23 +1043,31 @@ export async function ensureLoyaltyObjectForCard({
 
     existed = true;
 
-    await walletRequest({
-      method: "PATCH",
-      path: `/walletobjects/v1/loyaltyObject/${objectId}`,
-      body: loyaltyObjectPayload,
-    });
-    console.log("GW_OBJECT_UPSERT_OK", { objectId });
+    try {
+      await walletRequest({
+        method: "PATCH",
+        path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+        body: loyaltyObjectPayload,
+      });
+      console.log("GW_OBJECT_UPSERT_OK", { objectId });
+    } catch (patchErr) {
+      handleWalletError(patchErr, loyaltyObjectPayload);
+    }
   } catch (err) {
     if (err?.status !== 404) {
-      throw err;
+      handleWalletError(err, loyaltyObjectPayload);
     }
 
-    await walletRequest({
-      method: "POST",
-      path: "/walletobjects/v1/loyaltyObject",
-      body: loyaltyObjectPayload,
-    });
-    console.log("GW_OBJECT_UPSERT_OK", { objectId });
+    try {
+      await walletRequest({
+        method: "POST",
+        path: "/walletobjects/v1/loyaltyObject",
+        body: loyaltyObjectPayload,
+      });
+      console.log("GW_OBJECT_UPSERT_OK", { objectId });
+    } catch (createErr) {
+      handleWalletError(createErr, loyaltyObjectPayload);
+    }
   }
 
   cardDoc.googleWallet = cardDoc.googleWallet || {};
@@ -1046,7 +1108,7 @@ export async function ensureGenericClassForMerchant({
 
   let existed = false;
 
-  const handleWalletError = (err) => {
+  const handleWalletError = (err, payload) => {
     if (isGoogleWalletBadRequest(err) && googleWalletConfig.isDevEnv) {
       console.warn(
         "GW_GENERIC_CLASS_SYNC_ERROR",
@@ -1054,6 +1116,12 @@ export async function ensureGenericClassForMerchant({
         err?.responseBody?.error?.message
       );
     }
+
+    logInvalidResourcePayload({
+      err,
+      label: "genericClass",
+      payload,
+    });
 
     throw err;
   };
@@ -1074,12 +1142,12 @@ export async function ensureGenericClassForMerchant({
           body: genericClass,
         });
       } catch (err) {
-        handleWalletError(err);
+        handleWalletError(err, genericClass);
       }
     }
   } catch (err) {
     if (err?.status !== 404) {
-      handleWalletError(err);
+      handleWalletError(err, genericClass);
     }
 
     try {
@@ -1089,7 +1157,7 @@ export async function ensureGenericClassForMerchant({
         body: genericClass,
       });
     } catch (createErr) {
-      handleWalletError(createErr);
+      handleWalletError(createErr, genericClass);
     }
   }
 
@@ -1145,6 +1213,15 @@ export async function ensureGenericObjectForCard({
   });
 
   let existed = false;
+  const handleWalletError = (err, payload) => {
+    logInvalidResourcePayload({
+      err,
+      label: "genericObject",
+      payload,
+    });
+
+    throw err;
+  };
 
   try {
     await walletRequest({
@@ -1154,21 +1231,29 @@ export async function ensureGenericObjectForCard({
 
     existed = true;
 
-    await walletRequest({
-      method: "PATCH",
-      path: `/walletobjects/v1/genericObject/${objectId}`,
-      body: genericObjectPayload,
-    });
+    try {
+      await walletRequest({
+        method: "PATCH",
+        path: `/walletobjects/v1/genericObject/${objectId}`,
+        body: genericObjectPayload,
+      });
+    } catch (patchErr) {
+      handleWalletError(patchErr, genericObjectPayload);
+    }
   } catch (err) {
     if (err?.status !== 404) {
-      throw err;
+      handleWalletError(err, genericObjectPayload);
     }
 
-    await walletRequest({
-      method: "POST",
-      path: "/walletobjects/v1/genericObject",
-      body: genericObjectPayload,
-    });
+    try {
+      await walletRequest({
+        method: "POST",
+        path: "/walletobjects/v1/genericObject",
+        body: genericObjectPayload,
+      });
+    } catch (createErr) {
+      handleWalletError(createErr, genericObjectPayload);
+    }
   }
 
   cardDoc.googleWallet = cardDoc.googleWallet || {};
