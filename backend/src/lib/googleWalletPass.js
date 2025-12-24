@@ -1229,6 +1229,10 @@ export async function ensureGenericObjectForCard({
 
   const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
   const textModulesData = buildGenericFrontFields({ card: cardDoc, template: templateDoc });
+  const customer = await Customer.findOne({ merchantId }).lean();
+  if (!customer) {
+  throw new Error("Customer not found for this merchant");
+}
   const genericObjectPayload = buildGenericObjectPayload({
     objectId,
     classId,
