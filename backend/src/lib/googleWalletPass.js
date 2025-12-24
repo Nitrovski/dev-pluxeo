@@ -616,14 +616,18 @@ function buildGenericObjectPayload({
   classId,
   barcodeValue,
   textModulesData,
+  linksModuleData,
   template,
   customer,
 }) {
   const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
 
   const walletGoogle = template?.wallet?.google || {};
-  const programName =
-    (walletGoogle.programName || template?.programName || "").trim() || DEFAULT_PROGRAM_NAME;
+  const headlineTitle = String(template?.headline ?? "").trim();
+  const programName = String(walletGoogle.programName || template?.programName || "").trim();
+  const customerName = String(customer?.name ?? "").trim();
+  const cardTitleValue =
+    headlineTitle || programName || customerName || DEFAULT_PROGRAM_NAME;
   const subheadline = String(template?.subheadline || "").trim();
   const headerText = resolveHeaderText({ template, customer });
 
@@ -632,7 +636,7 @@ function buildGenericObjectPayload({
     classId,
     state: "ACTIVE",
     cardTitle: {
-      defaultValue: { language: "cs", value: programName },
+      defaultValue: { language: "cs", value: cardTitleValue },
     },
     header: {
       defaultValue: { language: "cs", value: headerText },
@@ -655,6 +659,12 @@ function buildGenericObjectPayload({
 
   if (sanitizedTextModules.length > 0) {
     payload.textModulesData = sanitizedTextModules;
+  }
+
+  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
+
+  if (sanitizedLinksModule) {
+    payload.linksModuleData = sanitizedLinksModule;
   }
 
   return payload;
@@ -1228,16 +1238,22 @@ export async function ensureGenericObjectForCard({
   });
 
   const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
-  const textModulesData = buildGenericFrontFields({ card: cardDoc, template: templateDoc });
+  const { textModules } = buildObjectTextModules({
+    template: templateDoc,
+    card: cardDoc,
+  });
+  const textModulesData = textModules;
+  const linksModuleData = buildObjectLinksModuleData(templateDoc);
   const customer = await Customer.findOne({ merchantId });
   if (!customer) {
-  throw new Error("Customer not found for this merchant");
-}
+    throw new Error("Customer not found for this merchant");
+  }
   const genericObjectPayload = buildGenericObjectPayload({
     objectId,
     classId,
     barcodeValue,
     textModulesData,
+    linksModuleData,
     template: templateDoc,
     customer,
   });
