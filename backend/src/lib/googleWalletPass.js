@@ -182,8 +182,23 @@ function sanitizeLinks(links) {
     .filter((link) => link.description || link.label);
 }
 
-function sanitizeTextModulesData(modules) {
-  return sanitizeTextModules(modules);
+function trimTextModuleValue(value) {
+  return String(value ?? "").trim();
+}
+
+function compactTextModulesData(textModulesData) {
+  if (!Array.isArray(textModulesData)) return [];
+
+  return textModulesData
+    .map((module) => {
+      const header = trimTextModuleValue(module?.header);
+      const body = trimTextModuleValue(module?.body);
+
+      return { ...(module || {}), header, body };
+    })
+    // Google Wallet rejects textModulesData entries without a header ("header must be set").
+    .filter((module) => module.header && module.body)
+    .slice(0, MAX_TEXT_MODULES);
 }
 
 function normalizeLinksModuleData(linksModuleData) {
@@ -626,7 +641,7 @@ function buildGenericObjectPayload({
     };
   }
 
-  const sanitizedTextModules = sanitizeTextModulesData(textModulesData);
+  const sanitizedTextModules = compactTextModulesData(textModulesData);
 
   if (sanitizedTextModules.length > 0) {
     payload.textModulesData = sanitizedTextModules;
@@ -805,7 +820,7 @@ function buildLoyaltyObjectPayload({
     };
   }
 
-  const sanitizedTextModules = sanitizeTextModulesData(textModulesData);
+  const sanitizedTextModules = compactTextModulesData(textModulesData);
 
   if (sanitizedTextModules.length > 0) {
     payload.textModulesData = sanitizedTextModules;
