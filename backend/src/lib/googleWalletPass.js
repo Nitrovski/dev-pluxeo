@@ -1111,7 +1111,7 @@ export async function ensureGenericClassForMerchant({
     throw new Error("merchantId is required");
   }
 
-  const customer = await Customer.findOne({ merchantId }).lean();
+  const customer = await Customer.findOne({ merchantId });
   if (!customer) {
     throw new Error("Customer not found for this merchant");
   }
@@ -1229,7 +1229,7 @@ export async function ensureGenericObjectForCard({
 
   const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
   const textModulesData = buildGenericFrontFields({ card: cardDoc, template: templateDoc });
-  const customer = await Customer.findOne({ merchantId }).lean();
+  const customer = await Customer.findOne({ merchantId });
   if (!customer) {
   throw new Error("Customer not found for this merchant");
 }
