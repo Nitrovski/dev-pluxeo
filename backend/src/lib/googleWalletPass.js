@@ -247,6 +247,16 @@ function normalizeWebsiteUrl(websiteUrl) {
   }
 }
 
+function resolveHeaderText({ template, customer }) {
+  const templateHeader = String(template?.wallet?.google?.headerText ?? "").trim();
+  if (templateHeader) return templateHeader;
+
+  const customerName = String(customer?.name ?? "").trim();
+  if (customerName) return customerName;
+
+  return DEFAULT_PROGRAM_NAME;
+}
+
 function buildTemplateTextModulesData(template) {
   const modules = [];
   const promoText = sanitizePromoText(template?.promoText);
@@ -607,14 +617,15 @@ function buildGenericObjectPayload({
   barcodeValue,
   textModulesData,
   template,
+  customer,
 }) {
   const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
 
   const walletGoogle = template?.wallet?.google || {};
   const programName =
     (walletGoogle.programName || template?.programName || "").trim() || DEFAULT_PROGRAM_NAME;
-  const headline = String(template?.headline || "").trim();
   const subheadline = String(template?.subheadline || "").trim();
+  const headerText = resolveHeaderText({ template, customer });
 
   const payload = {
     id: objectId,
@@ -623,11 +634,10 @@ function buildGenericObjectPayload({
     cardTitle: {
       defaultValue: { language: "cs", value: programName },
     },
+    header: {
+      defaultValue: { language: "cs", value: headerText },
+    },
   };
-
-  if (headline) {
-    payload.header = { defaultValue: { language: "cs", value: headline } };
-  }
 
   if (subheadline) {
     payload.subheader = { defaultValue: { language: "cs", value: subheadline } };
@@ -1107,6 +1117,7 @@ export async function ensureGenericClassForMerchant({
   }
 
   const templateDoc = template || (await CardTemplate.findOne({ merchantId }).lean());
+  const customer = await Customer.findOne({ merchantId }).lean();
   const classPrefix = `${googleWalletConfig.classPrefix}${GENERIC_CLASS_PREFIX_SUFFIX}`;
 
   const classId = makeClassId({
@@ -1225,6 +1236,7 @@ export async function ensureGenericObjectForCard({
     barcodeValue,
     textModulesData,
     template: templateDoc,
+    customer,
   });
 
   let existed = false;

@@ -81,6 +81,7 @@ const CardTemplateSchema = new Schema(
           enum: ["loyalty", "generic"],
           default: "loyalty",
         },
+        headerText: { type: String, default: null },
         issuerName: { type: String, default: "" },
         programName: { type: String, default: "" },
         logoUrl: { type: String, default: "" },

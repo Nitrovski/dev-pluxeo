@@ -24,6 +24,12 @@ function isObj(v) {
   return v && typeof v === "object" && !Array.isArray(v);
 }
 
+function normalizeHeaderText(value) {
+  if (value === null || value === undefined) return null;
+  const trimmed = String(value).trim();
+  return trimmed ? trimmed : null;
+}
+
 function createConcurrencyQueue(limit, items, handler) {
   let nextIndex = 0;
 
@@ -59,6 +65,7 @@ function normalizeWallet(inWallet) {
       googleIn.passType === "generic" || googleIn.passType === "loyalty"
         ? googleIn.passType
         : "loyalty",
+    headerText: normalizeHeaderText(googleIn.headerText),
     issuerName: pickString(googleIn.issuerName, ""),
     programName: pickString(googleIn.programName, ""),
     logoUrl: pickString(googleIn.logoUrl, ""),
@@ -181,6 +188,7 @@ async function cardTemplateRoutes(fastify, options) {
             google: {
               enabled: false,
               passType: "loyalty",
+              headerText: null,
               issuerName: "",
               programName: "",
               logoUrl: "",
@@ -279,6 +287,7 @@ async function cardTemplateRoutes(fastify, options) {
 
           $set["wallet.google.enabled"] = Boolean(g.enabled);
           $set["wallet.google.passType"] = g.passType;
+          $set["wallet.google.headerText"] = normalizeHeaderText(g.headerText);
           $set["wallet.google.issuerName"] = pickString(g.issuerName, "");
           $set["wallet.google.programName"] = pickString(g.programName, "");
           $set["wallet.google.logoUrl"] = pickString(g.logoUrl, "");
