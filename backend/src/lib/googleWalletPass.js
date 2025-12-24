@@ -1111,13 +1111,12 @@ export async function ensureGenericClassForMerchant({
     throw new Error("merchantId is required");
   }
 
-  const customer = await Customer.findOne({ merchantId });
+  const customer = await Customer.findOne({ merchantId }).lean();
   if (!customer) {
     throw new Error("Customer not found for this merchant");
   }
 
   const templateDoc = template || (await CardTemplate.findOne({ merchantId }).lean());
-  const customer = await Customer.findOne({ merchantId }).lean();
   const classPrefix = `${googleWalletConfig.classPrefix}${GENERIC_CLASS_PREFIX_SUFFIX}`;
 
   const classId = makeClassId({
