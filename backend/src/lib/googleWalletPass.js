@@ -1127,6 +1127,11 @@ export async function ensureGenericClassForMerchant({
   }
 
   const templateDoc = template || (await CardTemplate.findOne({ merchantId }).lean());
+  const pendingPatchAt = templateDoc?.walletSync?.google?.generic?.pendingPatchAt;
+  const lastPatchedAt = templateDoc?.walletSync?.google?.generic?.lastPatchedAt;
+  const patchPending =
+    pendingPatchAt &&
+    (!lastPatchedAt || new Date(pendingPatchAt) > new Date(lastPatchedAt));
   const classPrefix = `${googleWalletConfig.classPrefix}${GENERIC_CLASS_PREFIX_SUFFIX}`;
 
   const classId = makeClassId({
@@ -1169,7 +1174,7 @@ export async function ensureGenericClassForMerchant({
 
     existed = true;
 
-    if (forcePatch) {
+    if (forcePatch || patchPending) {
       try {
         await walletRequest({
           method: "PATCH",
@@ -1238,11 +1243,10 @@ export async function ensureGenericObjectForCard({
   });
 
   const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
-  const { textModules } = buildObjectTextModules({
-    template: templateDoc,
+  const textModulesData = buildGenericFrontFields({
     card: cardDoc,
+    template: templateDoc,
   });
-  const textModulesData = textModules;
   const linksModuleData = buildObjectLinksModuleData(templateDoc);
   const customer = await Customer.findOne({ merchantId });
   if (!customer) {
@@ -1277,14 +1281,16 @@ export async function ensureGenericObjectForCard({
 
     existed = true;
 
-    try {
-      await walletRequest({
-        method: "PATCH",
-        path: `/walletobjects/v1/genericObject/${objectId}`,
-        body: genericObjectPayload,
-      });
-    } catch (patchErr) {
-      handleWalletError(patchErr, genericObjectPayload);
+    if (forcePatch) {
+      try {
+        await walletRequest({
+          method: "PATCH",
+          path: `/walletobjects/v1/genericObject/${objectId}`,
+          body: genericObjectPayload,
+        });
+      } catch (patchErr) {
+        handleWalletError(patchErr, genericObjectPayload);
+      }
     }
   } catch (err) {
     if (err?.status !== 404) {
@@ -1308,6 +1314,198 @@ export async function ensureGenericObjectForCard({
   await cardDoc.save();
 
   return { objectId, classId, existed };
+}
+
+export async function syncGoogleGenericForMerchantTemplate({
+  authClient,
+  merchantId,
+  templateDoc,
+}) {
+  if (authClient) {
+    console.log("GW_GENERIC_TEMPLATE_SYNC_AUTH", { hasAuthClient: Boolean(authClient) });
+  }
+
+  if (!merchantId) {
+    throw new Error("merchantId is required");
+  }
+
+  const template =
+    templateDoc && typeof templateDoc.save === "function"
+      ? templateDoc
+      : await CardTemplate.findOne({ merchantId });
+
+  if (!template) {
+    throw new Error("Card template not found for this merchant");
+  }
+
+  const customer = await Customer.findOne({ merchantId });
+  if (!customer) {
+    throw new Error("Customer not found for this merchant");
+  }
+
+  const templateValue = typeof template.toObject === "function" ? template.toObject() : template;
+
+  const { classId } = await ensureGenericClassForMerchant({
+    merchantId,
+    forcePatch: true,
+    template: templateValue,
+  });
+
+  const totalCards = await Card.countDocuments({ merchantId });
+  console.log("GW_GENERIC_TEMPLATE_SYNC_START", {
+    merchantId,
+    classId,
+    totalCards,
+  });
+
+  if (googleWalletConfig.isDevEnv) {
+    try {
+      const savedClass = await walletRequest({
+        method: "GET",
+        path: `/walletobjects/v1/genericClass/${classId}`,
+      });
+
+      console.log("GW_GENERIC_CLASS_SAVED_STATE", {
+        classId,
+        hexBackgroundColor: savedClass?.hexBackgroundColor,
+        logoUri: savedClass?.logo?.sourceUri?.uri || null,
+        heroImageUri: savedClass?.heroImage?.sourceUri?.uri || null,
+      });
+    } catch (verificationErr) {
+      console.warn("GW_GENERIC_CLASS_VERIFY_FAILED", {
+        classId,
+        error: verificationErr?.message,
+      });
+    }
+  }
+
+  const batchSize = 200;
+  let lastId = null;
+  let processed = 0;
+  let errors = 0;
+  let sampleLogged = 0;
+
+  while (true) {
+    const query = { merchantId };
+    if (lastId) {
+      query._id = { $gt: lastId };
+    }
+
+    const batch = await Card.find(query).sort({ _id: 1 }).limit(batchSize);
+    if (batch.length === 0) break;
+
+    for (const card of batch) {
+      const objectId = makeObjectId({
+        issuerId: googleWalletConfig.issuerId,
+        cardId: card._id,
+      });
+
+      try {
+        const barcodeValue = await resolveLoyaltyObjectBarcode({
+          card,
+          cardId: card._id,
+        });
+        const textModulesData = buildGenericFrontFields({
+          card,
+          template: templateValue,
+        });
+        const linksModuleData = buildObjectLinksModuleData(templateValue);
+
+        const genericObjectPayload = buildGenericObjectPayload({
+          objectId,
+          classId,
+          barcodeValue,
+          textModulesData,
+          linksModuleData,
+          template: templateValue,
+          customer,
+        });
+
+        if (sampleLogged < 2) {
+          sampleLogged += 1;
+          console.log("GW_GENERIC_OBJECT_SAMPLE", {
+            merchantId,
+            objectId,
+            textModulesCount: Array.isArray(textModulesData) ? textModulesData.length : 0,
+            hasLogoUrl: Boolean(templateValue?.wallet?.google?.logoUrl),
+            backgroundColor:
+              templateValue?.wallet?.google?.backgroundColor ||
+              templateValue?.primaryColor ||
+              null,
+          });
+        }
+
+        let existed = false;
+
+        try {
+          await walletRequest({
+            method: "GET",
+            path: `/walletobjects/v1/genericObject/${objectId}`,
+          });
+          existed = true;
+        } catch (getErr) {
+          if (getErr?.status !== 404) {
+            throw getErr;
+          }
+        }
+
+        if (existed) {
+          await walletRequest({
+            method: "PATCH",
+            path: `/walletobjects/v1/genericObject/${objectId}`,
+            body: genericObjectPayload,
+          });
+        } else {
+          await walletRequest({
+            method: "POST",
+            path: "/walletobjects/v1/genericObject",
+            body: genericObjectPayload,
+          });
+        }
+
+        card.googleWallet = card.googleWallet || {};
+        card.googleWallet.objectId = objectId;
+        card.googleWallet.passType = "generic";
+        await card.save();
+
+        processed += 1;
+      } catch (objectErr) {
+        errors += 1;
+        console.warn("GW_GENERIC_OBJECT_SYNC_FAILED", {
+          merchantId,
+          cardId: card?._id,
+          error: objectErr?.message || objectErr,
+        });
+      }
+    }
+
+    lastId = batch[batch.length - 1]?._id;
+    console.log("GW_GENERIC_TEMPLATE_SYNC_BATCH", {
+      merchantId,
+      classId,
+      processed,
+      totalCards,
+      errors,
+      batchSize: batch.length,
+    });
+  }
+
+  template.walletSync = template.walletSync || {};
+  template.walletSync.google = template.walletSync.google || {};
+  template.walletSync.google.generic = template.walletSync.google.generic || {};
+  template.walletSync.google.generic.lastPatchedAt = new Date();
+  template.walletSync.google.generic.pendingPatchAt = null;
+  await template.save();
+
+  console.log("GW_GENERIC_TEMPLATE_SYNC_DONE", {
+    merchantId,
+    classId,
+    processed,
+    totalCards,
+    errors,
+  });
+
+  return { classId, processed, totalCards, errors };
 }
 
 function resolveDesiredPassType(cardDoc, template) {

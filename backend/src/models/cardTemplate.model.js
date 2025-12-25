@@ -110,6 +110,14 @@ const CardTemplateSchema = new Schema(
         ],
       },
     },
+    walletSync: {
+      google: {
+        generic: {
+          pendingPatchAt: { type: Date, default: null },
+          lastPatchedAt: { type: Date, default: null },
+        },
+      },
+    },
   },
   { timestamps: true }
 );

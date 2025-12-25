@@ -3,10 +3,9 @@ import { CardTemplate } from "../models/cardTemplate.model.js";
 import { Card } from "../models/card.model.js";
 import { getAuth } from "@clerk/fastify";
 import {
-  ensureGenericClassForMerchant,
-  ensureGenericObjectForCard,
   ensureLoyaltyClassForMerchant,
   ensureLoyaltyObjectForCard,
+  syncGoogleGenericForMerchantTemplate,
 } from "../lib/googleWalletPass.js";
 
 function pickString(v, fallback = "") {
@@ -324,10 +323,11 @@ async function cardTemplateRoutes(fastify, options) {
         { merchantId },
         { $set },
         { new: true, upsert: true }
-      ).lean();
+      );
 
       // extra safety: normalize wallet from DB before using/sending
       template.wallet = normalizeWallet(template.wallet);
+      const templateValue = template.toObject();
 
       const effectivePassType = resolveEffectivePassTypeFromTemplate(template);
 
@@ -339,67 +339,71 @@ async function cardTemplateRoutes(fastify, options) {
         passType: effectivePassType,
       };
 
-      // sync class
-      try {
-        const syncResult =
-          effectivePassType === "generic"
-            ? await ensureGenericClassForMerchant({
-                merchantId,
-                forcePatch: true,
-                template,
-              })
-            : await ensureLoyaltyClassForMerchant({
-                merchantId,
-                forcePatch: true,
-                template,
-              });
+      template.walletSync = template.walletSync || {};
+      template.walletSync.google = template.walletSync.google || {};
+      template.walletSync.google.generic = template.walletSync.google.generic || {};
+      template.walletSync.google.generic.pendingPatchAt = new Date();
+      await template.save();
 
-        walletSyncResult.classSynced = true;
-        walletSyncResult.classId = syncResult?.classId ?? null;
-      } catch (syncErr) {
-        request.log.warn({ err: syncErr }, "google wallet class sync failed");
-      }
-
-      // sync objects – poslední X karet
-      if (syncWalletObjects) {
+      if (effectivePassType === "generic") {
         try {
-          const cardsToSync = await Card.find({ merchantId })
-            .sort({ updatedAt: -1 })
-            .limit(syncWalletObjectsLimit)
-            .select({ _id: 1 })
-            .lean();
+          const syncResult = await syncGoogleGenericForMerchantTemplate({
+            merchantId,
+            templateDoc: template,
+          });
 
-          await createConcurrencyQueue(
-            syncWalletObjectsConcurrency,
-            cardsToSync,
-            async (card) => {
-              try {
-                if (effectivePassType === "generic") {
-                  await ensureGenericObjectForCard({
-                    merchantId,
-                    cardId: card._id,
-                    forcePatch: true,
-                    template,
-                  });
-                } else {
+          walletSyncResult.classSynced = true;
+          walletSyncResult.classId = syncResult?.classId ?? null;
+          walletSyncResult.objectsSynced = syncResult?.processed ?? 0;
+          walletSyncResult.objectsFailed = syncResult?.errors ?? 0;
+        } catch (syncErr) {
+          request.log.warn({ err: syncErr }, "google wallet generic sync failed");
+        }
+      } else {
+        try {
+          const syncResult = await ensureLoyaltyClassForMerchant({
+            merchantId,
+            forcePatch: true,
+            template: templateValue,
+          });
+
+          walletSyncResult.classSynced = true;
+          walletSyncResult.classId = syncResult?.classId ?? null;
+        } catch (syncErr) {
+          request.log.warn({ err: syncErr }, "google wallet class sync failed");
+        }
+
+        if (syncWalletObjects) {
+          try {
+            const cardsToSync = await Card.find({ merchantId })
+              .sort({ updatedAt: -1 })
+              .limit(syncWalletObjectsLimit)
+              .select({ _id: 1 })
+              .lean();
+
+            await createConcurrencyQueue(
+              syncWalletObjectsConcurrency,
+              cardsToSync,
+              async (card) => {
+                try {
                   await ensureLoyaltyObjectForCard({
                     merchantId,
                     cardId: card._id,
                     forcePatch: true,
                   });
+                  walletSyncResult.objectsSynced += 1;
+                } catch (objectErr) {
+                  walletSyncResult.objectsFailed += 1;
+                  request.log.warn(
+                    { err: objectErr, cardId: card?._id },
+                    "google wallet object sync failed"
+                  );
                 }
-                walletSyncResult.objectsSynced += 1;
-              } catch (objectErr) {
-                walletSyncResult.objectsFailed += 1;
-                request.log.warn(
-                  { err: objectErr, cardId: card?._id },
-                  "google wallet object sync failed"
-                );
               }
-            }
-          );
-        } catch (objectsSyncErr) {
-          request.log.warn({ err: objectsSyncErr }, "google wallet objects sync batch failed");
+            );
+          } catch (objectsSyncErr) {
+            request.log.warn({ err: objectsSyncErr }, "google wallet objects sync batch failed");
+          }
         }
       }
 
