@@ -588,6 +588,8 @@ async function buildGenericClassPayload({ classId, customer, template }) {
   const classTemplateInfo = buildGenericClassTemplateInfo(
     estimateGenericFieldCount(template)
   );
+  const linksModuleData = buildObjectLinksModuleData(template);
+  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
 
   const payload = {
     id: classId,
@@ -604,6 +606,10 @@ async function buildGenericClassPayload({ classId, customer, template }) {
     payload.heroImage = { sourceUri: { uri: heroImageUrl } };
   }
 
+  if (sanitizedLinksModule) {
+    payload.linksModuleData = sanitizedLinksModule;
+  }
+
   payload.cardTitle = {
     defaultValue: { language: "cs", value: programName },
   };
@@ -616,7 +622,6 @@ function buildGenericObjectPayload({
   classId,
   barcodeValue,
   textModulesData,
-  linksModuleData,
   template,
   customer,
 }) {
@@ -661,12 +666,6 @@ function buildGenericObjectPayload({
     payload.textModulesData = sanitizedTextModules;
   }
 
-  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
-
-  if (sanitizedLinksModule) {
-    payload.linksModuleData = sanitizedLinksModule;
-  }
-
   return payload;
 }
 
@@ -689,6 +688,22 @@ function extractClassDebugFields(loyaltyClass) {
     heroImageUrl: loyaltyClass?.heroImage?.sourceUri?.uri || null,
     templateRows: rowCount,
     renderedBarcodes: renderedBarcodeCount,
+  };
+}
+
+function extractGenericClassDebugFields(genericClass) {
+  const linkCount = Array.isArray(genericClass?.linksModuleData?.uris)
+    ? genericClass.linksModuleData.uris.length
+    : 0;
+
+  return {
+    hexBackgroundColor: genericClass?.hexBackgroundColor ?? null,
+    logoUri: genericClass?.logo?.sourceUri?.uri ?? null,
+    issuerName:
+      genericClass?.issuerName ??
+      genericClass?.issuerDisplayName ??
+      null,
+    linksCount: linkCount,
   };
 }
 
@@ -1166,6 +1181,25 @@ export async function ensureGenericClassForMerchant({
     throw err;
   };
 
+  const logGenericClassState = async () => {
+    try {
+      const savedClass = await walletRequest({
+        method: "GET",
+        path: `/walletobjects/v1/genericClass/${classId}`,
+      });
+
+      console.log("GW_GENERIC_CLASS_SAVED_STATE", {
+        classId,
+        ...extractGenericClassDebugFields(savedClass || {}),
+      });
+    } catch (verificationErr) {
+      console.warn("GW_GENERIC_CLASS_VERIFY_FAILED", {
+        classId,
+        error: verificationErr?.message,
+      });
+    }
+  };
+
   try {
     await walletRequest({
       method: "GET",
@@ -1181,6 +1215,7 @@ export async function ensureGenericClassForMerchant({
           path: `/walletobjects/v1/genericClass/${classId}`,
           body: genericClass,
         });
+        await logGenericClassState();
       } catch (err) {
         handleWalletError(err, genericClass);
       }
@@ -1247,7 +1282,6 @@ export async function ensureGenericObjectForCard({
     card: cardDoc,
     template: templateDoc,
   });
-  const linksModuleData = buildObjectLinksModuleData(templateDoc);
   const customer = await Customer.findOne({ merchantId });
   if (!customer) {
     throw new Error("Customer not found for this merchant");
@@ -1257,7 +1291,6 @@ export async function ensureGenericObjectForCard({
     classId,
     barcodeValue,
     textModulesData,
-    linksModuleData,
     template: templateDoc,
     customer,
   });
@@ -1409,14 +1442,12 @@ export async function syncGoogleGenericForMerchantTemplate({
           card,
           template: templateValue,
         });
-        const linksModuleData = buildObjectLinksModuleData(templateValue);
 
         const genericObjectPayload = buildGenericObjectPayload({
           objectId,
           classId,
           barcodeValue,
           textModulesData,
-          linksModuleData,
           template: templateValue,
           customer,
         });
