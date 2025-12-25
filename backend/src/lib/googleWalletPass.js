@@ -542,16 +542,40 @@ function estimateGenericFieldCount(template) {
   return Math.max(1, count);
 }
 
-async function buildGenericClassPayload({ classId, customer, template }) {
+async function buildGenericClassPayload({ classId, template }) {
+  const classTemplateInfo = buildGenericClassTemplateInfo(
+    estimateGenericFieldCount(template)
+  );
+
+  const payload = {
+    id: classId,
+    reviewStatus: "UNDER_REVIEW",
+    classTemplateInfo,
+  };
+
+  return payload;
+}
+
+async function buildGenericObjectPayload({
+  objectId,
+  classId,
+  barcodeValue,
+  textModulesData,
+  template,
+  customer,
+}) {
+  const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
+
   const walletGoogle = template?.wallet?.google || {};
   const issuerName =
-    (walletGoogle.issuerName || customer?.name || "").trim() || DEFAULT_PROGRAM_NAME;
-  const programName =
-    (walletGoogle.programName || template?.programName || customer?.name || "")
-      .trim() || DEFAULT_PROGRAM_NAME;
+    String(walletGoogle.issuerName || customer?.name || "").trim() ||
+    DEFAULT_PROGRAM_NAME;
+  const cardTitleValue = issuerName;
+  const subheadline = String(template?.subheadline || "").trim();
+  const headerText = resolveHeaderText({ template, customer });
   const hexBackgroundColor =
-    walletGoogle.hexBackgroundColor?.trim() ||
     walletGoogle.backgroundColor?.trim() ||
+    walletGoogle.hexBackgroundColor?.trim() ||
     template?.primaryColor?.trim() ||
     DEFAULT_PRIMARY_COLOR;
 
@@ -586,57 +610,6 @@ async function buildGenericClassPayload({ classId, customer, template }) {
   );
   const heroImageUrl = await validateImageUrlOrFallback(heroImageCandidate);
 
-  const classTemplateInfo = buildGenericClassTemplateInfo(
-    estimateGenericFieldCount(template)
-  );
-  const linksModuleData = buildObjectLinksModuleData(template);
-  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
-
-  const payload = {
-    id: classId,
-    issuerName,
-    reviewStatus: "UNDER_REVIEW",
-    logo: {
-      sourceUri: { uri: logoUrl },
-    },
-    hexBackgroundColor,
-    classTemplateInfo,
-  };
-
-  if (heroImageUrl) {
-    payload.heroImage = { sourceUri: { uri: heroImageUrl } };
-  }
-
-  if (sanitizedLinksModule) {
-    payload.linksModuleData = sanitizedLinksModule;
-  }
-
-  payload.cardTitle = {
-    defaultValue: { language: "cs", value: programName },
-  };
-
-  return payload;
-}
-
-function buildGenericObjectPayload({
-  objectId,
-  classId,
-  barcodeValue,
-  textModulesData,
-  template,
-  customer,
-}) {
-  const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
-
-  const walletGoogle = template?.wallet?.google || {};
-  const headlineTitle = String(template?.headline ?? "").trim();
-  const programName = String(walletGoogle.programName || template?.programName || "").trim();
-  const customerName = String(customer?.name ?? "").trim();
-  const cardTitleValue =
-    headlineTitle || programName || customerName || DEFAULT_PROGRAM_NAME;
-  const subheadline = String(template?.subheadline || "").trim();
-  const headerText = resolveHeaderText({ template, customer });
-
   const payload = {
     id: objectId,
     classId,
@@ -647,10 +620,18 @@ function buildGenericObjectPayload({
     header: {
       defaultValue: { language: "cs", value: headerText },
     },
+    hexBackgroundColor,
+    logo: {
+      sourceUri: { uri: logoUrl },
+    },
   };
 
   if (subheadline) {
     payload.subheader = { defaultValue: { language: "cs", value: subheadline } };
+  }
+
+  if (heroImageUrl) {
+    payload.heroImage = { sourceUri: { uri: heroImageUrl } };
   }
 
   if (normalizedBarcodeValue) {
@@ -665,6 +646,13 @@ function buildGenericObjectPayload({
 
   if (sanitizedTextModules.length > 0) {
     payload.textModulesData = sanitizedTextModules;
+  }
+
+  const linksModuleData = buildObjectLinksModuleData(template);
+  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
+
+  if (sanitizedLinksModule) {
+    payload.linksModuleData = sanitizedLinksModule;
   }
 
   return payload;
@@ -696,15 +684,37 @@ function extractGenericClassDebugFields(genericClass) {
   const linkCount = Array.isArray(genericClass?.linksModuleData?.uris)
     ? genericClass.linksModuleData.uris.length
     : 0;
+  const hasTemplateInfo = Boolean(
+    genericClass?.classTemplateInfo || genericClass?.cardTemplateInfo
+  );
+  const textModulesCount = Array.isArray(genericClass?.textModulesData)
+    ? genericClass.textModulesData.length
+    : 0;
+  const imageModulesCount = Array.isArray(genericClass?.imageModulesData)
+    ? genericClass.imageModulesData.length
+    : 0;
 
   return {
-    hexBackgroundColor: genericClass?.hexBackgroundColor ?? null,
-    logoUri: genericClass?.logo?.sourceUri?.uri ?? null,
-    issuerName:
-      genericClass?.issuerName ??
-      genericClass?.issuerDisplayName ??
-      null,
+    hasTemplateInfo,
     linksCount: linkCount,
+    textModulesCount,
+    imageModulesCount,
+  };
+}
+
+function extractGenericObjectDebugFields(genericObject) {
+  const hasLinks =
+    Boolean(genericObject?.appLinkData) ||
+    (Array.isArray(genericObject?.linksModuleData?.uris) &&
+      genericObject.linksModuleData.uris.length > 0);
+
+  return {
+    hexBackgroundColor: genericObject?.hexBackgroundColor ?? null,
+    logoUri: genericObject?.logo?.sourceUri?.uri ?? null,
+    heroImageUri: genericObject?.heroImage?.sourceUri?.uri ?? null,
+    cardTitle: genericObject?.cardTitle?.defaultValue?.value ?? null,
+    header: genericObject?.header?.defaultValue?.value ?? null,
+    hasLinks,
   };
 }
 
@@ -1158,7 +1168,6 @@ export async function ensureGenericClassForMerchant({
 
   const genericClass = await buildGenericClassPayload({
     classId,
-    customer,
     template: templateDoc,
   });
 
@@ -1213,15 +1222,7 @@ export async function ensureGenericClassForMerchant({
       try {
         console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
           classId,
-          programName: genericClass?.cardTitle?.defaultValue?.value ?? null,
-          headerText: resolveHeaderText({ template: templateDoc, customer }),
-          issuerName: genericClass?.issuerName ?? null,
-          hexBackgroundColor: genericClass?.hexBackgroundColor ?? null,
-          logoUri: genericClass?.logo?.sourceUri?.uri ?? null,
-          linksCount: Array.isArray(genericClass?.linksModuleData?.uris)
-            ? genericClass.linksModuleData.uris.length
-            : 0,
-          heroImageUri: genericClass?.heroImage?.sourceUri?.uri ?? null,
+          ...extractGenericClassDebugFields(genericClass),
         });
         await walletRequest({
           method: "PATCH",
@@ -1299,7 +1300,7 @@ export async function ensureGenericObjectForCard({
   if (!customer) {
     throw new Error("Customer not found for this merchant");
   }
-  const genericObjectPayload = buildGenericObjectPayload({
+  const genericObjectPayload = await buildGenericObjectPayload({
     objectId,
     classId,
     barcodeValue,
@@ -1334,6 +1335,17 @@ export async function ensureGenericObjectForCard({
           path: `/walletobjects/v1/genericObject/${objectId}`,
           body: genericObjectPayload,
         });
+
+        if (googleWalletConfig.isDevEnv) {
+          const savedObject = await walletRequest({
+            method: "GET",
+            path: `/walletobjects/v1/genericObject/${objectId}`,
+          });
+          console.log("GW_GENERIC_OBJECT_SAVED_STATE", {
+            objectId,
+            ...extractGenericObjectDebugFields(savedObject || {}),
+          });
+        }
       } catch (patchErr) {
         handleWalletError(patchErr, genericObjectPayload);
       }
@@ -1404,27 +1416,6 @@ export async function syncGoogleGenericForMerchantTemplate({
     totalCards,
   });
 
-  if (googleWalletConfig.isDevEnv) {
-    try {
-      const savedClass = await walletRequest({
-        method: "GET",
-        path: `/walletobjects/v1/genericClass/${classId}`,
-      });
-
-      console.log("GW_GENERIC_CLASS_SAVED_STATE", {
-        classId,
-        hexBackgroundColor: savedClass?.hexBackgroundColor,
-        logoUri: savedClass?.logo?.sourceUri?.uri || null,
-        heroImageUri: savedClass?.heroImage?.sourceUri?.uri || null,
-      });
-    } catch (verificationErr) {
-      console.warn("GW_GENERIC_CLASS_VERIFY_FAILED", {
-        classId,
-        error: verificationErr?.message,
-      });
-    }
-  }
-
   const batchSize = 200;
   let lastId = null;
   let processed = 0;
@@ -1456,7 +1447,7 @@ export async function syncGoogleGenericForMerchantTemplate({
           template: templateValue,
         });
 
-        const genericObjectPayload = buildGenericObjectPayload({
+        const genericObjectPayload = await buildGenericObjectPayload({
           objectId,
           classId,
           barcodeValue,
@@ -1499,6 +1490,17 @@ export async function syncGoogleGenericForMerchantTemplate({
             path: `/walletobjects/v1/genericObject/${objectId}`,
             body: genericObjectPayload,
           });
+
+          if (googleWalletConfig.isDevEnv) {
+            const savedObject = await walletRequest({
+              method: "GET",
+              path: `/walletobjects/v1/genericObject/${objectId}`,
+            });
+            console.log("GW_GENERIC_OBJECT_SAVED_STATE", {
+              objectId,
+              ...extractGenericObjectDebugFields(savedObject || {}),
+            });
+          }
         } else {
           await walletRequest({
             method: "POST",
