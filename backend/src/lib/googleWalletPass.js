@@ -549,7 +549,8 @@ async function buildGenericClassPayload({ classId, customer, template }) {
   const programName =
     (walletGoogle.programName || template?.programName || customer?.name || "")
       .trim() || DEFAULT_PROGRAM_NAME;
-  const primaryColor =
+  const hexBackgroundColor =
+    walletGoogle.hexBackgroundColor?.trim() ||
     walletGoogle.backgroundColor?.trim() ||
     template?.primaryColor?.trim() ||
     DEFAULT_PRIMARY_COLOR;
@@ -598,7 +599,7 @@ async function buildGenericClassPayload({ classId, customer, template }) {
     logo: {
       sourceUri: { uri: logoUrl },
     },
-    hexBackgroundColor: primaryColor,
+    hexBackgroundColor,
     classTemplateInfo,
   };
 
@@ -1210,6 +1211,18 @@ export async function ensureGenericClassForMerchant({
 
     if (forcePatch || patchPending) {
       try {
+        console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
+          classId,
+          programName: genericClass?.cardTitle?.defaultValue?.value ?? null,
+          headerText: resolveHeaderText({ template: templateDoc, customer }),
+          issuerName: genericClass?.issuerName ?? null,
+          hexBackgroundColor: genericClass?.hexBackgroundColor ?? null,
+          logoUri: genericClass?.logo?.sourceUri?.uri ?? null,
+          linksCount: Array.isArray(genericClass?.linksModuleData?.uris)
+            ? genericClass.linksModuleData.uris.length
+            : 0,
+          heroImageUri: genericClass?.heroImage?.sourceUri?.uri ?? null,
+        });
         await walletRequest({
           method: "PATCH",
           path: `/walletobjects/v1/genericClass/${classId}`,
