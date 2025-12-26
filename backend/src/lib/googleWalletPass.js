@@ -933,6 +933,15 @@ function extractClassDebugFields(loyaltyClass) {
 }
 
 function extractGenericClassDebugFields(genericClass) {
+  const templateOverride = genericClass?.classTemplateInfo?.cardTemplateOverride;
+  const rowCount = Array.isArray(templateOverride?.cardRowTemplateInfos)
+    ? templateOverride.cardRowTemplateInfos.length
+    : 0;
+  const renderedBarcodeCount = Array.isArray(
+    templateOverride?.cardBarcodeSectionDetails?.renderedBarcodes
+  )
+    ? templateOverride.cardBarcodeSectionDetails.renderedBarcodes.length
+    : 0;
   const linkCount = Array.isArray(genericClass?.linksModuleData?.uris)
     ? genericClass.linksModuleData.uris.length
     : 0;
@@ -951,6 +960,8 @@ function extractGenericClassDebugFields(genericClass) {
     linksCount: linkCount,
     textModulesCount,
     imageModulesCount,
+    templateRows: rowCount,
+    renderedBarcodes: renderedBarcodeCount,
   };
 }
 
@@ -1472,10 +1483,12 @@ export async function ensureGenericClassForMerchant({
 
     if (forcePatch || patchPending) {
       try {
-        console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
-          classId,
-          ...extractGenericClassDebugFields(genericClass),
-        });
+        if (googleWalletConfig.isDevEnv) {
+          console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
+            classId,
+            ...extractGenericClassDebugFields(genericClass),
+          });
+        }
         await walletRequest({
           method: "PATCH",
           path: `/walletobjects/v1/genericClass/${classId}`,
