@@ -1567,6 +1567,109 @@ function resolveDesiredPassType(cardDoc, template) {
   return cardDoc?.googleWallet?.passType === "generic" ? "generic" : "loyalty";
 }
 
+export async function updateGoogleWalletObjectForCard({
+  cardId,
+  onBeforePatch = null,
+}) {
+  if (!cardId) {
+    throw new Error("cardId is required");
+  }
+
+  const card = await Card.findById(cardId);
+  if (!card) {
+    throw new Error("Card not found");
+  }
+
+  const template = await CardTemplate.findOne({ merchantId: card.merchantId }).lean();
+  if (!template) {
+    throw new Error("Card template not found for this merchant");
+  }
+
+  if (!template?.wallet?.google?.enabled) {
+    return { skipped: true, reason: "google wallet disabled" };
+  }
+
+  const passType = resolveDesiredPassType(card, template);
+  if (passType !== "generic") {
+    return { skipped: true, passType };
+  }
+
+  const objectId =
+    card?.googleWallet?.objectId ||
+    makeObjectId({
+      issuerId: googleWalletConfig.issuerId,
+      cardId: card._id,
+    });
+
+  const existingObject = await walletRequest({
+    method: "GET",
+    path: `/walletobjects/v1/genericObject/${objectId}`,
+  });
+
+  const barcodeValue = await resolveLoyaltyObjectBarcode({
+    card,
+    cardId: card._id,
+  });
+  const normalizedBarcode = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
+  const textModulesData = compactTextModulesData(
+    buildGenericFrontFields({
+      card,
+      template,
+    })
+  );
+
+  const patchPayload = {
+    state: "ACTIVE",
+    textModulesData,
+  };
+
+  if (normalizedBarcode) {
+    patchPayload.barcode = {
+      type: "QR_CODE",
+      value: normalizedBarcode,
+      alternateText: "Pluxeo",
+    };
+  }
+
+  if (existingObject?.hexBackgroundColor) {
+    patchPayload.hexBackgroundColor = existingObject.hexBackgroundColor;
+  }
+
+  if (existingObject?.logo?.sourceUri?.uri) {
+    patchPayload.logo = { sourceUri: { uri: existingObject.logo.sourceUri.uri } };
+  }
+
+  if (existingObject?.heroImage?.sourceUri?.uri) {
+    patchPayload.heroImage = {
+      sourceUri: { uri: existingObject.heroImage.sourceUri.uri },
+    };
+  }
+
+  if (existingObject?.cardTitle?.defaultValue?.value) {
+    patchPayload.cardTitle = existingObject.cardTitle;
+  }
+
+  if (existingObject?.header?.defaultValue?.value) {
+    patchPayload.header = existingObject.header;
+  }
+
+  if (onBeforePatch) {
+    onBeforePatch({
+      cardId: String(card._id),
+      objectId,
+      passType,
+    });
+  }
+
+  await walletRequest({
+    method: "PATCH",
+    path: `/walletobjects/v1/genericObject/${objectId}`,
+    body: patchPayload,
+  });
+
+  return { objectId, passType, patched: true };
+}
+
 export async function ensureGoogleClassForMerchant({
   merchantId,
   templateOverride = null,
