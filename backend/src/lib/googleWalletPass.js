@@ -40,6 +40,24 @@ const GENERIC_FIELD_LABELS = {
   websiteUrl: "Web",
   customMessage: "Zpráva",
 };
+const GENERIC_FIELD_LABELS_I18N = {
+  cs: {
+    promoText: "AKCE",
+    stamps: "Razítka",
+    rewards: "Odměna",
+    openingHours: "Otevírací doba",
+    websiteUrl: "Web",
+    customMessage: "Zpráva",
+  },
+  en: {
+    promoText: "Info",
+    stamps: "Stamps",
+    rewards: "Reward",
+    openingHours: "Opening hours",
+    websiteUrl: "Website",
+    customMessage: "Message",
+  },
+};
 const GENERIC_FIELD_META = {
   promoText: { defaultShowLabel: false },
   customMessage: { defaultShowLabel: false },
@@ -429,20 +447,31 @@ function buildGenericLayoutSlots({ template }) {
   return slots;
 }
 
-function resolveGenericFieldLabel(fieldId) {
-  return GENERIC_FIELD_LABELS[fieldId] || fieldId || "";
+function resolveGenericLocale({ template, card } = {}) {
+  const candidate =
+    template?.wallet?.google?.locale ||
+    template?.wallet?.google?.language ||
+    template?.locale ||
+    card?.locale;
+  const normalized = String(candidate || "").trim().toLowerCase();
+  if (normalized === "en") return "en";
+  return "cs";
+}
+
+function resolveGenericFieldLabel(fieldId, locale, fallbackLabels = GENERIC_FIELD_LABELS) {
+  const labels = GENERIC_FIELD_LABELS_I18N[locale] || GENERIC_FIELD_LABELS_I18N.cs;
+  return labels[fieldId] || fallbackLabels[fieldId] || fieldId || "";
 }
 
 function resolveGenericFieldValue({ fieldId, card, template }) {
   if (fieldId === "stamps") {
     const stamps = Number(card?.stamps ?? 0);
-    const total = Number(template?.rules?.freeStampsToReward ?? 0);
-    return `${stamps} / ${total}`;
+    return String(stamps);
   }
 
   if (fieldId === "rewards") {
     const rewards = Number(card?.rewards ?? 0);
-    return rewards > 0 ? "✅ reward available" : String(rewards);
+    return String(rewards);
   }
 
   if (fieldId === "promoText") {
@@ -724,12 +753,13 @@ function buildGenericLinksModuleData({ template }) {
   const slots = buildGenericLayoutSlots({ template });
   const websiteSlot = slots.find((slot) => slot.fieldId === "websiteUrl");
   if (!websiteSlot) return null;
+  const locale = resolveGenericLocale({ template });
 
   return {
     uris: [
       {
         uri: normalizedWebsite,
-        description: websiteSlot.label || resolveGenericFieldLabel("websiteUrl"),
+        description: websiteSlot.label || resolveGenericFieldLabel("websiteUrl", locale),
       },
     ],
   };
@@ -737,10 +767,10 @@ function buildGenericLinksModuleData({ template }) {
 
 function buildGenericFrontFields({ card, template }) {
   const slots = buildGenericLayoutSlots({ template });
+  const locale = resolveGenericLocale({ template, card });
 
   return slots.map((slot) => {
-    const showLabel =
-      slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
+    const showLabel = slot.showLabel ?? true;
     const body = resolveGenericFieldValue({
       fieldId: slot.fieldId,
       card,
@@ -751,9 +781,10 @@ function buildGenericFrontFields({ card, template }) {
       id: slot.slotId,
       body,
     };
+    // Sanity: front fields always carry label + body (e.g. stamps "3" without "/").
 
     if (showLabel) {
-      const header = slot.label || resolveGenericFieldLabel(slot.fieldId);
+      const header = slot.label || resolveGenericFieldLabel(slot.fieldId, locale);
       if (header) {
         module.header = header;
       }
