@@ -40,6 +40,14 @@ const GENERIC_FIELD_LABELS = {
   websiteUrl: "Web",
   customMessage: "Zpráva",
 };
+const GENERIC_FIELD_META = {
+  promoText: { defaultShowLabel: false },
+  customMessage: { defaultShowLabel: false },
+  stamps: { defaultShowLabel: true },
+  rewards: { defaultShowLabel: true },
+  openingHours: { defaultShowLabel: true },
+  websiteUrl: { defaultShowLabel: true },
+};
 
 function isObj(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -215,13 +223,29 @@ function compactTextModulesData(textModulesData) {
 
   return textModulesData
     .map((module) => {
+      const allowHeaderless = module?.allowHeaderless === true;
       const header = trimTextModuleValue(module?.header);
       const body = trimTextModuleValue(module?.body);
 
-      return { ...(module || {}), header, body };
+      const normalized = { ...(module || {}) };
+      delete normalized.header;
+      delete normalized.body;
+      delete normalized.allowHeaderless;
+
+      if (header) {
+        normalized.header = header;
+      }
+
+      normalized.body = body;
+
+      return { normalized, allowHeaderless };
     })
-    // Google Wallet rejects textModulesData entries without a header ("header must be set").
-    .filter((module) => module.header && module.body)
+    // Google Wallet rejects entries without a header unless we explicitly allow headerless modules.
+    .filter(
+      ({ normalized, allowHeaderless }) =>
+        normalized.body && (normalized.header || allowHeaderless)
+    )
+    .map(({ normalized }) => normalized)
     .slice(0, MAX_TEXT_MODULES);
 }
 
@@ -276,10 +300,11 @@ function normalizeGenericLayoutSlot(slot) {
 
   const fieldId = typeof slot.fieldId === "string" ? slot.fieldId : null;
   const label = typeof slot.label === "string" ? slot.label : null;
+  const showLabel = typeof slot.showLabel === "boolean" ? slot.showLabel : undefined;
 
   if (!fieldId) return null;
 
-  return { fieldId, label };
+  return { fieldId, label, showLabel };
 }
 
 function buildLegacyGenericLayout(template) {
@@ -376,6 +401,7 @@ function buildGenericLayoutSlots({ template }) {
           slotId: slotIds.value,
           fieldId: row.value.fieldId,
           label: row.value.label,
+          showLabel: row.value.showLabel,
         });
       }
       return;
@@ -386,6 +412,7 @@ function buildGenericLayoutSlots({ template }) {
         slotId: slotIds.left,
         fieldId: row.left.fieldId,
         label: row.left.label,
+        showLabel: row.left.showLabel,
       });
     }
 
@@ -394,6 +421,7 @@ function buildGenericLayoutSlots({ template }) {
         slotId: slotIds.right,
         fieldId: row.right.fieldId,
         label: row.right.label,
+        showLabel: row.right.showLabel,
       });
     }
   });
@@ -711,18 +739,27 @@ function buildGenericFrontFields({ card, template }) {
   const slots = buildGenericLayoutSlots({ template });
 
   return slots.map((slot) => {
-    const header = slot.label || resolveGenericFieldLabel(slot.fieldId);
+    const showLabel =
+      slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
+    const header = showLabel ? slot.label || resolveGenericFieldLabel(slot.fieldId) : null;
     const body = resolveGenericFieldValue({
       fieldId: slot.fieldId,
       card,
       template,
     });
 
-    return {
+    const module = {
       id: slot.slotId,
-      header,
       body,
     };
+
+    if (header) {
+      module.header = header;
+    } else {
+      module.allowHeaderless = true;
+    }
+
+    return module;
   });
 }
 
@@ -1643,6 +1680,9 @@ export async function syncGoogleGenericForMerchantTemplate({
           card,
           template: templateValue,
         });
+        const hiddenLabelCount = Array.isArray(textModulesData)
+          ? textModulesData.filter((module) => module?.allowHeaderless === true).length
+          : 0;
 
         const genericObjectPayload = await buildGenericObjectPayload({
           objectId,
@@ -1659,6 +1699,7 @@ export async function syncGoogleGenericForMerchantTemplate({
             merchantId,
             objectId,
             textModulesCount: Array.isArray(textModulesData) ? textModulesData.length : 0,
+            hiddenLabelCount,
             hasLogoUrl: Boolean(templateValue?.wallet?.google?.logoUrl),
             backgroundColor:
               templateValue?.wallet?.google?.backgroundColor ||
