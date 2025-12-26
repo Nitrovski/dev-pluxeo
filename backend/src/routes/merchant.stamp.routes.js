@@ -6,7 +6,10 @@ import { issueRedeemCode } from "../lib/redeemCodes.js";
 import { buildPublicCardPayload } from "../lib/publicPayload.js";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
-import { ensureGooglePassForCard } from "../lib/googleWalletPass.js";
+import {
+  ensureGooglePassForCard,
+  updateGoogleWalletObjectForCard,
+} from "../lib/googleWalletPass.js";
 import { ensureCardHasScanCode } from "../lib/scanCode.js";
 
 function normToken(v) {
@@ -146,6 +149,24 @@ export async function merchantStampRoutes(fastify) {
         });
       } catch (err) {
         request.log?.warn?.({ err }, "google wallet ensure failed");
+      }
+
+      try {
+        const patchResult = await updateGoogleWalletObjectForCard({
+          cardId: String(card._id),
+          onBeforePatch: ({ objectId, passType }) => {
+            request.log?.info?.(
+              { cardId: String(card._id), objectId, passType },
+              "WALLET_OBJECT_PATCH_START"
+            );
+          },
+        });
+
+        if (patchResult?.patched) {
+          request.log?.info?.({ ok: true }, "WALLET_OBJECT_PATCH_DONE");
+        }
+      } catch (err) {
+        request.log?.error?.({ err }, "WALLET_OBJECT_PATCH_FAILED");
       }
 
       // 5) vrat updated public payload
