@@ -2,6 +2,24 @@ import mongoose from "mongoose";
 
 const { Schema } = mongoose;
 
+const GenericLayoutSlotSchema = new Schema(
+  {
+    fieldId: { type: String, default: null },
+    label: { type: String, default: null },
+  },
+  { _id: false }
+);
+
+const GenericLayoutRowSchema = new Schema(
+  {
+    type: { type: String, enum: ["two", "one"], default: "two" },
+    left: { type: GenericLayoutSlotSchema, default: null },
+    right: { type: GenericLayoutSlotSchema, default: null },
+    value: { type: GenericLayoutSlotSchema, default: null },
+  },
+  { _id: false }
+);
+
 const CardTemplateSchema = new Schema(
   {
     merchantId: {
@@ -95,6 +113,16 @@ const CardTemplateSchema = new Schema(
           showOpeningHours: { type: Boolean, default: false },
           showEmail: { type: Boolean, default: false },
           showTier: { type: Boolean, default: false },
+          layout: {
+            cardRows: {
+              type: [GenericLayoutRowSchema],
+              default: [
+                { type: "two", left: null, right: null },
+                { type: "two", left: null, right: null },
+                { type: "one", value: null },
+              ],
+            },
+          },
         },
         links: [
           {

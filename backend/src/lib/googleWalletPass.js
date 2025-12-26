@@ -14,12 +14,36 @@ const DEFAULT_PROGRAM_NAME = "Pluxeo";
 const DEFAULT_PRIMARY_COLOR = "#FF9900";
 const DEV_DEFAULT_LOGO_URL =
   "https://storage.googleapis.com/wallet-lab-tools-codelab-artifacts/LoyaltyClass/loyalty_class_logo.png";
-const MAX_TEXT_MODULES = 4;
+const MAX_TEXT_MODULES = 5;
 const PROMO_MAX_LENGTH = 60;
 const GENERIC_PROMO_MAX_LENGTH = 40;
 const MAX_BARCODE_LENGTH = 120;
 const FALLBACK_IMAGE_URL = "https://www.pluxeo.com/logo.png";
 const GENERIC_CLASS_PREFIX_SUFFIX = "_generic";
+const DEFAULT_GENERIC_LAYOUT = {
+  cardRows: [
+    { type: "two", left: null, right: null },
+    { type: "two", left: null, right: null },
+    { type: "one", value: null },
+  ],
+};
+const GENERIC_LAYOUT_SLOT_IDS = [
+  { type: "two", left: "r1_left", right: "r1_right" },
+  { type: "two", left: "r2_left", right: "r2_right" },
+  { type: "one", value: "r3" },
+];
+const GENERIC_FIELD_LABELS = {
+  promoText: "AKCE",
+  stamps: "Razítka",
+  rewards: "Odměny",
+  openingHours: "Otevírací doba",
+  websiteUrl: "Web",
+  customMessage: "Zpráva",
+};
+
+function isObj(value) {
+  return value && typeof value === "object" && !Array.isArray(value);
+}
 
 function normBarcodeValue(v) {
   return String(v ?? "")
@@ -247,6 +271,171 @@ function normalizeWebsiteUrl(websiteUrl) {
   }
 }
 
+function normalizeGenericLayoutSlot(slot) {
+  if (!isObj(slot)) return null;
+
+  const fieldId = typeof slot.fieldId === "string" ? slot.fieldId : null;
+  const label = typeof slot.label === "string" ? slot.label : null;
+
+  if (!fieldId) return null;
+
+  return { fieldId, label };
+}
+
+function buildLegacyGenericLayout(template) {
+  const cfg = template?.wallet?.google?.genericConfig || {};
+  const fields = [];
+
+  if (cfg.showPromo && sanitizeGenericPromoText(template?.promoText)) {
+    fields.push("promoText");
+  }
+
+  if (cfg.showStampsModule) {
+    fields.push("stamps", "rewards");
+  }
+
+  if (cfg.showOpeningHours && String(template?.openingHours || "").trim()) {
+    fields.push("openingHours");
+  }
+
+  if (cfg.showWebsite && normalizeWebsiteUrl(template?.websiteUrl)) {
+    fields.push("websiteUrl");
+  }
+
+  const cardRows = [
+    {
+      type: "two",
+      left: fields[0] ? { fieldId: fields[0] } : null,
+      right: fields[1] ? { fieldId: fields[1] } : null,
+    },
+    {
+      type: "two",
+      left: fields[2] ? { fieldId: fields[2] } : null,
+      right: fields[3] ? { fieldId: fields[3] } : null,
+    },
+    {
+      type: "one",
+      value: fields[4] ? { fieldId: fields[4] } : null,
+    },
+  ];
+
+  return { cardRows };
+}
+
+function normalizeGenericLayout(layout, template) {
+  if (!isObj(layout) || !Array.isArray(layout.cardRows)) {
+    return buildLegacyGenericLayout(template);
+  }
+
+  const rows = layout.cardRows.slice(0, 3);
+  const normalizedRows = rows.map((row, idx) => {
+    const defaultType = idx < 2 ? "two" : "one";
+    const rowType = row?.type === "one" || row?.type === "two" ? row.type : defaultType;
+
+    if (rowType === "one") {
+      return {
+        type: "one",
+        value: normalizeGenericLayoutSlot(row?.value),
+      };
+    }
+
+    return {
+      type: "two",
+      left: normalizeGenericLayoutSlot(row?.left),
+      right: normalizeGenericLayoutSlot(row?.right),
+    };
+  });
+
+  while (normalizedRows.length < 3) {
+    if (normalizedRows.length < 2) {
+      normalizedRows.push({ type: "two", left: null, right: null });
+    } else {
+      normalizedRows.push({ type: "one", value: null });
+    }
+  }
+
+  return { cardRows: normalizedRows };
+}
+
+function buildGenericLayoutSlots({ template }) {
+  const layout = normalizeGenericLayout(
+    template?.wallet?.google?.genericConfig?.layout,
+    template
+  );
+
+  const slots = [];
+
+  layout.cardRows.forEach((row, idx) => {
+    const slotIds = GENERIC_LAYOUT_SLOT_IDS[idx];
+
+    if (!slotIds) return;
+
+    if (row?.type === "one") {
+      if (row?.value?.fieldId) {
+        slots.push({
+          slotId: slotIds.value,
+          fieldId: row.value.fieldId,
+          label: row.value.label,
+        });
+      }
+      return;
+    }
+
+    if (row?.left?.fieldId) {
+      slots.push({
+        slotId: slotIds.left,
+        fieldId: row.left.fieldId,
+        label: row.left.label,
+      });
+    }
+
+    if (row?.right?.fieldId) {
+      slots.push({
+        slotId: slotIds.right,
+        fieldId: row.right.fieldId,
+        label: row.right.label,
+      });
+    }
+  });
+
+  return slots;
+}
+
+function resolveGenericFieldLabel(fieldId) {
+  return GENERIC_FIELD_LABELS[fieldId] || fieldId || "";
+}
+
+function resolveGenericFieldValue({ fieldId, card, template }) {
+  if (fieldId === "stamps") {
+    const stamps = Number(card?.stamps ?? 0);
+    const total = Number(template?.rules?.freeStampsToReward ?? 0);
+    return `${stamps} / ${total}`;
+  }
+
+  if (fieldId === "rewards") {
+    const rewards = Number(card?.rewards ?? 0);
+    return rewards > 0 ? "✅ reward available" : String(rewards);
+  }
+
+  if (fieldId === "promoText") {
+    return String(template?.promoText ?? "").trim();
+  }
+
+  if (fieldId === "openingHours") {
+    return String(template?.openingHours ?? "").trim();
+  }
+
+  if (fieldId === "websiteUrl") {
+    return String(template?.websiteUrl ?? "").trim();
+  }
+
+  if (fieldId === "customMessage") {
+    return String(template?.customMessage ?? "").trim();
+  }
+
+  return "";
+}
+
 function resolveHeaderText({ template, customer }) {
   const templateHeader = String(template?.wallet?.google?.headerText ?? "").trim();
   if (templateHeader) return templateHeader;
@@ -309,21 +498,57 @@ function buildTextModuleTemplate(index) {
   };
 }
 
-function buildGenericClassTemplateInfo(fieldCount = 0) {
+function buildTextModuleTemplateForSlot(slotId) {
+  return {
+    firstValue: {
+      fields: [{ fieldPath: `object.textModulesData['${slotId}'].header` }],
+    },
+    secondValue: {
+      fields: [{ fieldPath: `object.textModulesData['${slotId}'].body` }],
+    },
+  };
+}
+
+function buildGenericClassTemplateInfo({ template }) {
+  const layout = normalizeGenericLayout(
+    template?.wallet?.google?.genericConfig?.layout,
+    template
+  );
   const rows = [];
-  const normalizedCount = Math.max(1, fieldCount);
 
-  for (let idx = 0; idx < normalizedCount; idx += 2) {
-    const startIndex = idx;
-    const endIndex = idx + 1;
+  layout.cardRows.forEach((row, idx) => {
+    const slotIds = GENERIC_LAYOUT_SLOT_IDS[idx];
+    if (!slotIds) return;
 
+    if (row?.type === "one") {
+      if (!row?.value?.fieldId) return;
+
+      rows.push({
+        oneItem: buildTextModuleTemplateForSlot(slotIds.value),
+      });
+      return;
+    }
+
+    const leftPresent = Boolean(row?.left?.fieldId);
+    const rightPresent = Boolean(row?.right?.fieldId);
+
+    if (!leftPresent && !rightPresent) return;
+
+    if (leftPresent && rightPresent) {
+      rows.push({
+        twoItems: {
+          startItem: buildTextModuleTemplateForSlot(slotIds.left),
+          endItem: buildTextModuleTemplateForSlot(slotIds.right),
+        },
+      });
+      return;
+    }
+
+    const soloSlot = leftPresent ? slotIds.left : slotIds.right;
     rows.push({
-      twoItems: {
-        startItem: buildTextModuleTemplate(startIndex),
-        endItem: buildTextModuleTemplate(endIndex),
-      },
+      oneItem: buildTextModuleTemplateForSlot(soloSlot),
     });
-  }
+  });
 
   return {
     cardTemplateOverride: {
@@ -465,87 +690,26 @@ function buildObjectLinksModuleData(template) {
 }
 
 function buildGenericFrontFields({ card, template }) {
-  const cfg = template?.wallet?.google?.genericConfig || {};
-  const fields = [];
+  const slots = buildGenericLayoutSlots({ template });
 
-  if (cfg.showPromo) {
-    const promoText = sanitizeGenericPromoText(template?.promoText);
-    if (promoText) {
-      fields.push({ id: "promo", header: "AKCE", body: promoText });
-    }
-  }
+  return slots.map((slot) => {
+    const header = slot.label || resolveGenericFieldLabel(slot.fieldId);
+    const body = resolveGenericFieldValue({
+      fieldId: slot.fieldId,
+      card,
+      template,
+    });
 
-  if (cfg.showStampsModule) {
-    fields.push({ id: "stamps", header: "Razítka", body: String(card?.stamps ?? 0) });
-    fields.push({ id: "rewards", header: "Odměny", body: String(card?.rewards ?? 0) });
-  }
-
-  if (cfg.showWebsite && template?.websiteUrl) {
-    const normalizedWebsite = normalizeWebsiteUrl(template?.websiteUrl) || String(template?.websiteUrl).trim();
-    if (normalizedWebsite) {
-      fields.push({ id: "website", header: "Web", body: normalizedWebsite });
-    }
-  }
-
-  if (cfg.showOpeningHours && template?.openingHours) {
-    const openingHours = String(template?.openingHours || "").trim();
-    if (openingHours) {
-      fields.push({ id: "opening_hours", header: "Otevírací doba", body: openingHours });
-    }
-  }
-
-  if (cfg.showEmail && (template?.email || template?.contactEmail)) {
-    const email = String(template?.email || template?.contactEmail || "").trim();
-    if (email) {
-      fields.push({ id: "email", header: "Email", body: email });
-    }
-  }
-
-  if (cfg.showTier) {
-    const tierValue = String(card?.tier || card?.level || template?.tier || "").trim();
-    if (tierValue) {
-      fields.push({ id: "tier", header: "Tier", body: tierValue });
-    }
-  }
-
-  return fields;
-}
-
-function estimateGenericFieldCount(template) {
-  const cfg = template?.wallet?.google?.genericConfig || {};
-  let count = 0;
-
-  if (cfg.showPromo && sanitizeGenericPromoText(template?.promoText)) {
-    count += 1;
-  }
-
-  if (cfg.showStampsModule) {
-    count += 2;
-  }
-
-  if (cfg.showWebsite && normalizeWebsiteUrl(template?.websiteUrl)) {
-    count += 1;
-  }
-
-  if (cfg.showOpeningHours && String(template?.openingHours || "").trim()) {
-    count += 1;
-  }
-
-  if (cfg.showEmail && String(template?.email || template?.contactEmail || "").trim()) {
-    count += 1;
-  }
-
-  if (cfg.showTier) {
-    count += 1;
-  }
-
-  return Math.max(1, count);
+    return {
+      id: slot.slotId,
+      header,
+      body,
+    };
+  });
 }
 
 async function buildGenericClassPayload({ classId, template }) {
-  const classTemplateInfo = buildGenericClassTemplateInfo(
-    estimateGenericFieldCount(template)
-  );
+  const classTemplateInfo = buildGenericClassTemplateInfo({ template });
 
   const payload = {
     id: classId,
@@ -1407,6 +1571,21 @@ export async function syncGoogleGenericForMerchantTemplate({
     merchantId,
     forcePatch: true,
     template: templateValue,
+  });
+
+  const layoutSlots = buildGenericLayoutSlots({ template: templateValue });
+  const layoutRowsCount = Array.isArray(
+    templateValue?.wallet?.google?.genericConfig?.layout?.cardRows
+  )
+    ? templateValue.wallet.google.genericConfig.layout.cardRows.length
+    : DEFAULT_GENERIC_LAYOUT.cardRows.length;
+  const activeSlotCount = layoutSlots.length;
+
+  console.log("GW_GENERIC_TEMPLATE_SYNC_LAYOUT", {
+    merchantId,
+    layoutRowsCount,
+    activeSlotCount,
+    sampleSlotIds: layoutSlots.map((slot) => slot.slotId),
   });
 
   const totalCards = await Card.countDocuments({ merchantId });

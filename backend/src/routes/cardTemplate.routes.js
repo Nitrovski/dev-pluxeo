@@ -23,6 +23,87 @@ function isObj(v) {
   return v && typeof v === "object" && !Array.isArray(v);
 }
 
+const DEFAULT_GENERIC_LAYOUT = {
+  cardRows: [
+    { type: "two", left: null, right: null },
+    { type: "two", left: null, right: null },
+    { type: "one", value: null },
+  ],
+};
+
+function normalizeLayoutSlot(slot) {
+  if (!isObj(slot)) return null;
+
+  const fieldId = typeof slot.fieldId === "string" ? slot.fieldId : null;
+  const label = typeof slot.label === "string" ? slot.label : null;
+
+  if (!fieldId) return null;
+
+  return { fieldId, label };
+}
+
+function normalizeGenericLayout(layout) {
+  if (!isObj(layout) || !Array.isArray(layout.cardRows)) {
+    return DEFAULT_GENERIC_LAYOUT;
+  }
+
+  const rows = layout.cardRows.slice(0, 3);
+
+  const normalizedRows = rows.map((row, idx) => {
+    const defaultType = idx < 2 ? "two" : "one";
+    const rowType = row?.type === "one" || row?.type === "two" ? row.type : defaultType;
+
+    if (rowType === "one") {
+      return {
+        type: "one",
+        value: normalizeLayoutSlot(row?.value),
+      };
+    }
+
+    return {
+      type: "two",
+      left: normalizeLayoutSlot(row?.left),
+      right: normalizeLayoutSlot(row?.right),
+    };
+  });
+
+  while (normalizedRows.length < 3) {
+    if (normalizedRows.length < 2) {
+      normalizedRows.push({ type: "two", left: null, right: null });
+    } else {
+      normalizedRows.push({ type: "one", value: null });
+    }
+  }
+
+  return { cardRows: normalizedRows };
+}
+
+function hasDuplicateLayoutFields(layout) {
+  if (!isObj(layout) || !Array.isArray(layout.cardRows)) return false;
+
+  const seen = new Set();
+
+  const addFieldId = (slot) => {
+    const fieldId = slot?.fieldId;
+    if (!fieldId) return false;
+    if (seen.has(fieldId)) return true;
+    seen.add(fieldId);
+    return false;
+  };
+
+  for (const row of layout.cardRows) {
+    if (!isObj(row)) continue;
+    if (row.type === "one") {
+      if (addFieldId(row.value)) return true;
+    } else {
+      if (addFieldId(row.left)) return true;
+      if (addFieldId(row.right)) return true;
+    }
+  }
+
+  return false;
+}
+
 function normalizeHeaderText(value) {
   if (value === null || value === undefined) return null;
   const trimmed = String(value).trim();
@@ -57,6 +138,8 @@ function normalizeWallet(inWallet) {
   const appleIn = isObj(w.apple) ? w.apple : {};
 
   const genericConfigIn = isObj(googleIn.genericConfig) ? googleIn.genericConfig : {};
+  const layoutIn = genericConfigIn.layout;
+  const normalizedLayout = normalizeGenericLayout(layoutIn);
 
   const google = {
     enabled: Boolean(googleIn.enabled),
@@ -99,6 +182,7 @@ function normalizeWallet(inWallet) {
       showOpeningHours: Boolean(genericConfigIn.showOpeningHours),
       showEmail: Boolean(genericConfigIn.showEmail),
       showTier: Boolean(genericConfigIn.showTier),
+      layout: normalizedLayout,
     },
     // meta fields if present in DB
     classId: typeof googleIn.classId === "string" ? googleIn.classId : undefined,
@@ -232,6 +316,10 @@ async function cardTemplateRoutes(fastify, options) {
 
       const merchantId = userId;
       const payload = request.body || {};
+
+      if (hasDuplicateLayoutFields(payload?.wallet?.google?.genericConfig?.layout)) {
+        return reply.code(400).send({ error: "Duplicate field in layout" });
+      }
 
       // NOTE: máš to zapnuté natvrdo – nechávám jak je
       const syncWalletObjects = true;
