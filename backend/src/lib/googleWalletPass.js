@@ -689,6 +689,24 @@ function buildObjectLinksModuleData(template) {
   return uris.length > 0 ? { uris } : null;
 }
 
+function buildGenericLinksModuleData({ template }) {
+  const normalizedWebsite = normalizeWebsiteUrl(template?.websiteUrl);
+  if (!normalizedWebsite) return null;
+
+  const slots = buildGenericLayoutSlots({ template });
+  const websiteSlot = slots.find((slot) => slot.fieldId === "websiteUrl");
+  if (!websiteSlot) return null;
+
+  return {
+    uris: [
+      {
+        uri: normalizedWebsite,
+        description: websiteSlot.label || resolveGenericFieldLabel("websiteUrl"),
+      },
+    ],
+  };
+}
+
 function buildGenericFrontFields({ card, template }) {
   const slots = buildGenericLayoutSlots({ template });
 
@@ -812,7 +830,7 @@ async function buildGenericObjectPayload({
     payload.textModulesData = sanitizedTextModules;
   }
 
-  const linksModuleData = buildObjectLinksModuleData(template);
+  const linksModuleData = buildGenericLinksModuleData({ template });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
 
   if (sanitizedLinksModule) {
