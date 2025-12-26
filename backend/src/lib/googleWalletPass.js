@@ -619,7 +619,6 @@ function buildGenericClassTemplateInfo({ template }) {
           },
         ],
       },
-      cardRowTemplateInfos: rows,
     },
   };
 }
