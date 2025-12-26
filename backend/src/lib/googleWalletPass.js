@@ -567,46 +567,6 @@ function buildTextModuleTemplateForSlot(slotId) {
 }
 
 function buildGenericClassTemplateInfo({ template }) {
-  const layout = normalizeGenericLayout(
-    template?.wallet?.google?.genericConfig?.layout,
-    template
-  );
-  const rows = [];
-
-  layout.cardRows.forEach((row, idx) => {
-    const slotIds = GENERIC_LAYOUT_SLOT_IDS[idx];
-    if (!slotIds) return;
-
-    if (row?.type === "one") {
-      if (!row?.value?.fieldId) return;
-
-      rows.push({
-        oneItem: buildTextModuleTemplateForSlot(slotIds.value),
-      });
-      return;
-    }
-
-    const leftPresent = Boolean(row?.left?.fieldId);
-    const rightPresent = Boolean(row?.right?.fieldId);
-
-    if (!leftPresent && !rightPresent) return;
-
-    if (leftPresent && rightPresent) {
-      rows.push({
-        twoItems: {
-          startItem: buildTextModuleTemplateForSlot(slotIds.left),
-          endItem: buildTextModuleTemplateForSlot(slotIds.right),
-        },
-      });
-      return;
-    }
-
-    const soloSlot = leftPresent ? slotIds.left : slotIds.right;
-    rows.push({
-      oneItem: buildTextModuleTemplateForSlot(soloSlot),
-    });
-  });
-
   return {
     cardTemplateOverride: {
       cardBarcodeSectionDetails: {
@@ -1471,6 +1431,10 @@ export async function ensureGenericClassForMerchant({
 
     if (forcePatch || patchPending) {
       try {
+        const hasRows = Boolean(
+          genericClass?.classTemplateInfo?.cardTemplateOverride?.cardRowTemplateInfos
+        );
+        console.log("GW_GENERIC_CLASS_PATCH_CHECK", { classId, hasRows });
         console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
           classId,
           ...extractGenericClassDebugFields(genericClass),
