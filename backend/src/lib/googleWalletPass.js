@@ -741,7 +741,6 @@ function buildGenericFrontFields({ card, template }) {
   return slots.map((slot) => {
     const showLabel =
       slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
-    const header = showLabel ? slot.label || resolveGenericFieldLabel(slot.fieldId) : null;
     const body = resolveGenericFieldValue({
       fieldId: slot.fieldId,
       card,
@@ -753,8 +752,11 @@ function buildGenericFrontFields({ card, template }) {
       body,
     };
 
-    if (header) {
-      module.header = header;
+    if (showLabel) {
+      const header = slot.label || resolveGenericFieldLabel(slot.fieldId);
+      if (header) {
+        module.header = header;
+      }
     } else {
       module.allowHeaderless = true;
     }
