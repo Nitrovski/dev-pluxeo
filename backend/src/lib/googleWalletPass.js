@@ -387,6 +387,11 @@ function normalizeGenericLayout(layout, template) {
   return { cardRows: normalizedRows };
 }
 
+function isGoogleGenericBarcodeEnabled(template) {
+  const enabled = template?.wallet?.google?.genericConfig?.barcode?.enabled;
+  return enabled !== false;
+}
+
 function resolveGenericBarcodeConfig(template) {
   const barcode = template?.wallet?.google?.genericConfig?.barcode || {};
 
@@ -590,7 +595,7 @@ function buildGenericClassTemplateInfo({ template }) {
     template?.wallet?.google?.genericConfig?.layout,
     template
   );
-  const { enabled: barcodeEnabled } = resolveGenericBarcodeConfig(template);
+  const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
   const frontSlots = buildGenericFrontSlots({ template });
   const slotIndexById = new Map(
     frontSlots.map((slot, index) => [slot.slotId, index])
@@ -849,6 +854,7 @@ async function buildGenericObjectPayload({
 }) {
   const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
   const barcodeConfig = resolveGenericBarcodeConfig(template);
+  const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
 
   const walletGoogle = template?.wallet?.google || {};
   const issuerName =
@@ -918,7 +924,7 @@ async function buildGenericObjectPayload({
     payload.heroImage = { sourceUri: { uri: heroImageUrl } };
   }
 
-  if (barcodeConfig.enabled && normalizedBarcodeValue) {
+  if (barcodeEnabled && normalizedBarcodeValue) {
     payload.barcode = {
       type: barcodeConfig.type,
       value: normalizedBarcodeValue,
@@ -1577,7 +1583,17 @@ export async function ensureGenericObjectForCard({
     cardId,
   });
 
-  const barcodeValue = await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId });
+  const barcodeConfig = resolveGenericBarcodeConfig(templateDoc);
+  const barcodeEnabled = isGoogleGenericBarcodeEnabled(templateDoc);
+  console.log("GW_BARCODE_ENABLED", {
+    merchantId,
+    cardId: String(cardId),
+    enabled: barcodeEnabled,
+    config: barcodeConfig,
+  });
+  const barcodeValue = barcodeEnabled
+    ? await resolveLoyaltyObjectBarcode({ card: cardDoc, cardId })
+    : null;
   const textModulesData = buildGenericFrontFields({
     card: cardDoc,
     template: templateDoc,
@@ -1596,6 +1612,7 @@ export async function ensureGenericObjectForCard({
   });
 
   let existed = false;
+  let existingObject = null;
   const handleWalletError = (err, payload) => {
     logInvalidResourcePayload({
       err,
@@ -1607,7 +1624,7 @@ export async function ensureGenericObjectForCard({
   };
 
   try {
-    await walletRequest({
+    existingObject = await walletRequest({
       method: "GET",
       path: `/walletobjects/v1/genericObject/${objectId}`,
     });
@@ -1616,6 +1633,9 @@ export async function ensureGenericObjectForCard({
 
     if (forcePatch) {
       try {
+        if (!barcodeEnabled && existingObject?.barcode) {
+          genericObjectPayload.barcode = null;
+        }
         await walletRequest({
           method: "PATCH",
           path: `/walletobjects/v1/genericObject/${objectId}`,
@@ -1711,6 +1731,13 @@ export async function syncGoogleGenericForMerchantTemplate({
   });
 
   const totalCards = await Card.countDocuments({ merchantId });
+  const barcodeConfig = resolveGenericBarcodeConfig(templateValue);
+  const barcodeEnabled = isGoogleGenericBarcodeEnabled(templateValue);
+  console.log("GW_BARCODE_ENABLED", {
+    merchantId,
+    enabled: barcodeEnabled,
+    config: barcodeConfig,
+  });
   console.log("GW_GENERIC_TEMPLATE_SYNC_START", {
     merchantId,
     classId,
@@ -1739,10 +1766,12 @@ export async function syncGoogleGenericForMerchantTemplate({
       });
 
       try {
-        const barcodeValue = await resolveLoyaltyObjectBarcode({
-          card,
-          cardId: card._id,
-        });
+        const barcodeValue = barcodeEnabled
+          ? await resolveLoyaltyObjectBarcode({
+              card,
+              cardId: card._id,
+            })
+          : null;
         const textModulesData = buildGenericFrontFields({
           card,
           template: templateValue,
@@ -1776,9 +1805,10 @@ export async function syncGoogleGenericForMerchantTemplate({
         }
 
         let existed = false;
+        let existingObject = null;
 
         try {
-          await walletRequest({
+          existingObject = await walletRequest({
             method: "GET",
             path: `/walletobjects/v1/genericObject/${objectId}`,
           });
@@ -1790,6 +1820,9 @@ export async function syncGoogleGenericForMerchantTemplate({
         }
 
         if (existed) {
+          if (!barcodeEnabled && existingObject?.barcode) {
+            genericObjectPayload.barcode = null;
+          }
           await walletRequest({
             method: "PATCH",
             path: `/walletobjects/v1/genericObject/${objectId}`,
@@ -1911,12 +1944,21 @@ export async function updateGoogleWalletObjectForCard({
     path: `/walletobjects/v1/genericObject/${objectId}`,
   });
 
-  const barcodeValue = await resolveLoyaltyObjectBarcode({
-    card,
-    cardId: card._id,
-  });
-  const normalizedBarcode = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
   const barcodeConfig = resolveGenericBarcodeConfig(template);
+  const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
+  console.log("GW_BARCODE_ENABLED", {
+    cardId: String(card._id),
+    enabled: barcodeEnabled,
+    config: barcodeConfig,
+  });
+  let normalizedBarcode = "";
+  if (barcodeEnabled) {
+    const barcodeValue = await resolveLoyaltyObjectBarcode({
+      card,
+      cardId: card._id,
+    });
+    normalizedBarcode = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
+  }
   const textModulesData = compactTextModulesData(
     buildGenericFrontFields({
       card,
@@ -1930,12 +1972,14 @@ export async function updateGoogleWalletObjectForCard({
     textModulesData,
   };
 
-  if (barcodeConfig.enabled && normalizedBarcode) {
+  if (barcodeEnabled && normalizedBarcode) {
     patchPayload.barcode = {
       type: barcodeConfig.type,
       value: normalizedBarcode,
       alternateText: "Pluxeo",
     };
+  } else if (existingObject?.barcode) {
+    patchPayload.barcode = null;
   }
 
   if (existingObject?.hexBackgroundColor) {
