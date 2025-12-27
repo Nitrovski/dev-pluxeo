@@ -140,6 +140,7 @@ function normalizeWallet(inWallet) {
   const genericConfigIn = isObj(googleIn.genericConfig) ? googleIn.genericConfig : {};
   const layoutIn = genericConfigIn.layout;
   const normalizedLayout = normalizeGenericLayout(layoutIn);
+  const barcodeIn = isObj(genericConfigIn.barcode) ? genericConfigIn.barcode : {};
 
   const google = {
     enabled: Boolean(googleIn.enabled),
@@ -182,6 +183,10 @@ function normalizeWallet(inWallet) {
       showOpeningHours: Boolean(genericConfigIn.showOpeningHours),
       showEmail: Boolean(genericConfigIn.showEmail),
       showTier: Boolean(genericConfigIn.showTier),
+      barcode: {
+        enabled: barcodeIn.enabled !== undefined ? Boolean(barcodeIn.enabled) : true,
+        type: typeof barcodeIn.type === "string" ? barcodeIn.type : "QR_CODE",
+      },
       layout: normalizedLayout,
     },
     // meta fields if present in DB
@@ -287,6 +292,7 @@ async function cardTemplateRoutes(fastify, options) {
                 showOpeningHours: false,
                 showEmail: false,
                 showTier: false,
+                barcode: { enabled: true, type: "QR_CODE" },
               },
             },
             apple: {},
@@ -390,6 +396,7 @@ async function cardTemplateRoutes(fastify, options) {
             showOpeningHours: false,
             showEmail: false,
             showTier: false,
+            barcode: { enabled: true, type: "QR_CODE" },
           };
 
           // save apple (keep stable object)

@@ -113,6 +113,10 @@ const CardTemplateSchema = new Schema(
           showOpeningHours: { type: Boolean, default: false },
           showEmail: { type: Boolean, default: false },
           showTier: { type: Boolean, default: false },
+          barcode: {
+            enabled: { type: Boolean, default: true },
+            type: { type: String, default: "QR_CODE" },
+          },
           layout: {
             cardRows: {
               type: [GenericLayoutRowSchema],
