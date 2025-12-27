@@ -31,6 +31,7 @@ import { clerkPlugin } from '@clerk/fastify';
 import cardRoutes from './routes/card.routes.js';
 import customerRoutes from './routes/customer.routes.js';
 import cardTemplateRoutes from "./routes/cardTemplate.routes.js";
+import { cardTemplateStarterRoutes } from "./routes/cardTemplate.starters.routes.js";
 import { googleWalletConfig } from "./config/googleWallet.config.js";
 import { merchantWalletGoogleRoutes } from "./routes/merchant.wallet.google.routes.js";
 
@@ -94,6 +95,7 @@ const start = async () => {
     fastify.register(cardRoutes);
     fastify.register(customerRoutes);
     fastify.register(cardTemplateRoutes); // pridani template rout
+    fastify.register(cardTemplateStarterRoutes);
     fastify.register(meRoutes);
     fastify.register(dashboardRoutes);
     fastify.register(merchantEnrollmentRoutes);
