@@ -529,10 +529,7 @@ function buildTextModuleTemplate(index) {
 function buildTextModuleTemplateForSlot(slotId) {
   return {
     firstValue: {
-      fields: [{ fieldPath: `object.textModulesData['${slotId}'].header` }],
-    },
-    secondValue: {
-      fields: [{ fieldPath: `object.textModulesData['${slotId}'].body` }],
+      fields: [{ fieldPath: `object.textModulesData['${slotId}']` }],
     },
   };
 }
