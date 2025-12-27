@@ -218,28 +218,33 @@ function trimTextModuleValue(value) {
   return String(value ?? "").trim();
 }
 
-function compactTextModulesData(textModulesData) {
+function compactTextModulesData(textModulesData, { preserveFrontOrder = false } = {}) {
   if (!Array.isArray(textModulesData)) return [];
 
-  return textModulesData
-    .map((module) => {
-      const allowHeaderless = module?.allowHeaderless === true;
-      const header = trimTextModuleValue(module?.header);
-      const body = trimTextModuleValue(module?.body);
+  const normalizedModules = textModulesData.map((module) => {
+    const allowHeaderless = module?.allowHeaderless === true;
+    const header = trimTextModuleValue(module?.header);
+    const body = trimTextModuleValue(module?.body);
 
-      const normalized = { ...(module || {}) };
-      delete normalized.header;
-      delete normalized.body;
-      delete normalized.allowHeaderless;
+    const normalized = { ...(module || {}) };
+    delete normalized.header;
+    delete normalized.body;
+    delete normalized.allowHeaderless;
 
-      if (header) {
-        normalized.header = header;
-      }
+    if (header) {
+      normalized.header = header;
+    }
 
-      normalized.body = body;
+    normalized.body = body;
 
-      return { normalized, allowHeaderless };
-    })
+    return { normalized, allowHeaderless };
+  });
+
+  if (preserveFrontOrder) {
+    return normalizedModules.map(({ normalized }) => normalized);
+  }
+
+  return normalizedModules
     // Google Wallet rejects entries without a header unless we explicitly allow headerless modules.
     .filter(
       ({ normalized, allowHeaderless }) =>
@@ -429,6 +434,43 @@ function buildGenericLayoutSlots({ template }) {
   return slots;
 }
 
+function buildGenericFrontSlots({ template }) {
+  const layout = normalizeGenericLayout(
+    template?.wallet?.google?.genericConfig?.layout,
+    template
+  );
+
+  const slots = [];
+  const pushSlot = (slotId, slot) => {
+    if (!slotId) return;
+
+    slots.push({
+      slotId,
+      fieldId: slot?.fieldId || null,
+      label: slot?.label || null,
+      showLabel: slot?.showLabel ?? null,
+    });
+  };
+
+  layout.cardRows.forEach((row, idx) => {
+    if (slots.length >= 4) return;
+
+    const slotIds = GENERIC_LAYOUT_SLOT_IDS[idx];
+    if (!slotIds) return;
+
+    if (row?.type === "one") {
+      pushSlot(slotIds.value, row?.value);
+      return;
+    }
+
+    pushSlot(slotIds.left, row?.left);
+    if (slots.length >= 4) return;
+    pushSlot(slotIds.right, row?.right);
+  });
+
+  return slots;
+}
+
 function resolveGenericFieldLabel(fieldId) {
   return GENERIC_FIELD_LABELS[fieldId] || fieldId || "";
 }
@@ -526,10 +568,10 @@ function buildTextModuleTemplate(index) {
   };
 }
 
-function buildTextModuleTemplateForSlot(slotId) {
+function buildTextModuleTemplateForIndex(index) {
   return {
     firstValue: {
-      fields: [{ fieldPath: `object.textModulesData['${slotId}']` }],
+      fields: [{ fieldPath: `object.textModulesData[${index}]` }],
     },
   };
 }
@@ -539,6 +581,10 @@ function buildGenericClassTemplateInfo({ template }) {
     template?.wallet?.google?.genericConfig?.layout,
     template
   );
+  const frontSlots = buildGenericFrontSlots({ template });
+  const slotIndexById = new Map(
+    frontSlots.map((slot, index) => [slot.slotId, index])
+  );
   const rows = [];
 
   layout.cardRows.forEach((row, idx) => {
@@ -546,32 +592,33 @@ function buildGenericClassTemplateInfo({ template }) {
     if (!slotIds) return;
 
     if (row?.type === "one") {
-      if (!row?.value?.fieldId) return;
+      const slotIndex = slotIndexById.get(slotIds.value);
+      if (slotIndex == null) return;
 
       rows.push({
-        oneItem: buildTextModuleTemplateForSlot(slotIds.value),
+        oneItem: buildTextModuleTemplateForIndex(slotIndex),
       });
       return;
     }
 
-    const leftPresent = Boolean(row?.left?.fieldId);
-    const rightPresent = Boolean(row?.right?.fieldId);
+    const leftIndex = slotIndexById.get(slotIds.left);
+    const rightIndex = slotIndexById.get(slotIds.right);
 
-    if (!leftPresent && !rightPresent) return;
+    if (leftIndex == null && rightIndex == null) return;
 
-    if (leftPresent && rightPresent) {
+    if (leftIndex != null && rightIndex != null) {
       rows.push({
         twoItems: {
-          startItem: buildTextModuleTemplateForSlot(slotIds.left),
-          endItem: buildTextModuleTemplateForSlot(slotIds.right),
+          startItem: buildTextModuleTemplateForIndex(leftIndex),
+          endItem: buildTextModuleTemplateForIndex(rightIndex),
         },
       });
       return;
     }
 
-    const soloSlot = leftPresent ? slotIds.left : slotIds.right;
+    const soloIndex = leftIndex != null ? leftIndex : rightIndex;
     rows.push({
-      oneItem: buildTextModuleTemplateForSlot(soloSlot),
+      oneItem: buildTextModuleTemplateForIndex(soloIndex),
     });
   });
 
@@ -733,17 +780,22 @@ function buildGenericLinksModuleData({ template }) {
 }
 
 function buildGenericFrontFields({ card, template }) {
-  const slots = buildGenericLayoutSlots({ template });
+  const slots = buildGenericFrontSlots({ template });
 
   return slots.map((slot) => {
     const showLabel =
       slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
-    const header = showLabel ? slot.label || resolveGenericFieldLabel(slot.fieldId) : null;
-    const body = resolveGenericFieldValue({
-      fieldId: slot.fieldId,
-      card,
-      template,
-    });
+    const header = showLabel
+      ? slot.label || (slot.fieldId ? resolveGenericFieldLabel(slot.fieldId) : null)
+      : null;
+    const resolvedBody = slot.fieldId
+      ? resolveGenericFieldValue({
+          fieldId: slot.fieldId,
+          card,
+          template,
+        })
+      : "";
+    const body = trimTextModuleValue(resolvedBody) || "-";
 
     const module = {
       id: slot.slotId,
@@ -858,7 +910,9 @@ async function buildGenericObjectPayload({
     };
   }
 
-  const sanitizedTextModules = compactTextModulesData(textModulesData);
+  const sanitizedTextModules = compactTextModulesData(textModulesData, {
+    preserveFrontOrder: true,
+  });
 
   if (sanitizedTextModules.length > 0) {
     payload.textModulesData = sanitizedTextModules;
@@ -1850,7 +1904,8 @@ export async function updateGoogleWalletObjectForCard({
     buildGenericFrontFields({
       card,
       template,
-    })
+    }),
+    { preserveFrontOrder: true }
   );
 
   const patchPayload = {
