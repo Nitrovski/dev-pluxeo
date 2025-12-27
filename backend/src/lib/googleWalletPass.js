@@ -387,6 +387,15 @@ function normalizeGenericLayout(layout, template) {
   return { cardRows: normalizedRows };
 }
 
+function resolveGenericBarcodeConfig(template) {
+  const barcode = template?.wallet?.google?.genericConfig?.barcode || {};
+
+  return {
+    enabled: barcode.enabled !== false,
+    type: typeof barcode.type === "string" ? barcode.type : "QR_CODE",
+  };
+}
+
 function buildGenericLayoutSlots({ template }) {
   const layout = normalizeGenericLayout(
     template?.wallet?.google?.genericConfig?.layout,
@@ -581,6 +590,7 @@ function buildGenericClassTemplateInfo({ template }) {
     template?.wallet?.google?.genericConfig?.layout,
     template
   );
+  const { enabled: barcodeEnabled } = resolveGenericBarcodeConfig(template);
   const frontSlots = buildGenericFrontSlots({ template });
   const slotIndexById = new Map(
     frontSlots.map((slot, index) => [slot.slotId, index])
@@ -622,20 +632,25 @@ function buildGenericClassTemplateInfo({ template }) {
     });
   });
 
-  return {
-    cardTemplateOverride: {
-      cardBarcodeSectionDetails: {
-        renderedBarcodes: [
-          {
-            templateItem: {
-              firstValue: { fields: [{ fieldPath: "object.barcode" }] },
-            },
-            showCodeText: true,
+  const cardTemplateOverride = {
+    cardRowTemplateInfos: rows,
+  };
+
+  if (barcodeEnabled) {
+    cardTemplateOverride.cardBarcodeSectionDetails = {
+      renderedBarcodes: [
+        {
+          templateItem: {
+            firstValue: { fields: [{ fieldPath: "object.barcode" }] },
           },
-        ],
-      },
-      cardRowTemplateInfos: rows,
-    },
+          showCodeText: true,
+        },
+      ],
+    };
+  }
+
+  return {
+    cardTemplateOverride,
   };
 }
 
@@ -833,6 +848,7 @@ async function buildGenericObjectPayload({
   customer,
 }) {
   const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
+  const barcodeConfig = resolveGenericBarcodeConfig(template);
 
   const walletGoogle = template?.wallet?.google || {};
   const issuerName =
@@ -902,9 +918,9 @@ async function buildGenericObjectPayload({
     payload.heroImage = { sourceUri: { uri: heroImageUrl } };
   }
 
-  if (normalizedBarcodeValue) {
+  if (barcodeConfig.enabled && normalizedBarcodeValue) {
     payload.barcode = {
-      type: "QR_CODE",
+      type: barcodeConfig.type,
       value: normalizedBarcodeValue,
       alternateText: "Pluxeo",
     };
@@ -1900,6 +1916,7 @@ export async function updateGoogleWalletObjectForCard({
     cardId: card._id,
   });
   const normalizedBarcode = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
+  const barcodeConfig = resolveGenericBarcodeConfig(template);
   const textModulesData = compactTextModulesData(
     buildGenericFrontFields({
       card,
@@ -1913,9 +1930,9 @@ export async function updateGoogleWalletObjectForCard({
     textModulesData,
   };
 
-  if (normalizedBarcode) {
+  if (barcodeConfig.enabled && normalizedBarcode) {
     patchPayload.barcode = {
-      type: "QR_CODE",
+      type: barcodeConfig.type,
       value: normalizedBarcode,
       alternateText: "Pluxeo",
     };
