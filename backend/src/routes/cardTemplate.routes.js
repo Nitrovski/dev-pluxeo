@@ -36,10 +36,16 @@ function normalizeLayoutSlot(slot) {
 
   const fieldId = typeof slot.fieldId === "string" ? slot.fieldId : null;
   const label = typeof slot.label === "string" ? slot.label : null;
+  const showLabel =
+    typeof slot.showLabel === "boolean"
+      ? slot.showLabel
+      : typeof slot.showName === "boolean"
+        ? slot.showName
+        : undefined;
 
   if (!fieldId) return null;
 
-  return { fieldId, label };
+  return { fieldId, label, showLabel };
 }
 
 function normalizeGenericLayout(layout) {
@@ -47,7 +53,7 @@ function normalizeGenericLayout(layout) {
     return DEFAULT_GENERIC_LAYOUT;
   }
 
-  const rows = layout.cardRows.slice(0, 3);
+  const rows = layout.cardRows;
 
   const normalizedRows = rows.map((row, idx) => {
     const defaultType = idx < 2 ? "two" : "one";
