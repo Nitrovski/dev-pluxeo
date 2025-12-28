@@ -424,7 +424,7 @@ function buildGenericLayoutSlots({ template }) {
 
   const slots = [];
 
-  layout.cardRows.forEach((row, idx) => {
+  layout.cardRows.slice(0, 3).forEach((row, idx) => {
     const rowType = row?.type === "one" ? "one" : "two";
     const slotIds = buildGenericRowSlotIds(rowType, idx);
 
@@ -583,7 +583,7 @@ function buildGenericClassTemplateInfo({ template }) {
   );
   const rows = [];
 
-  layout.cardRows.forEach((row, idx) => {
+  layout.cardRows.slice(0, 3).forEach((row, idx) => {
     const rowType = row?.type === "one" ? "one" : "two";
     const slotIds = buildGenericRowSlotIds(rowType, idx);
 
@@ -914,9 +914,7 @@ async function buildGenericObjectPayload({
     };
   }
 
-  const sanitizedTextModules = compactTextModulesData(textModulesData, {
-    preserveFrontOrder: true,
-  });
+  const sanitizedTextModules = compactTextModulesData(textModulesData);
 
   if (sanitizedTextModules.length > 0) {
     payload.textModulesData = sanitizedTextModules;
