@@ -27,11 +27,6 @@ const DEFAULT_GENERIC_LAYOUT = {
     { type: "one", value: null },
   ],
 };
-const GENERIC_LAYOUT_SLOT_IDS = [
-  { type: "two", left: "r1_left", right: "r1_right" },
-  { type: "two", left: "r2_left", right: "r2_right" },
-  { type: "one", value: "r3" },
-];
 const GENERIC_FIELD_LABELS = {
   promoText: "AKCE",
   stamps: "Razítka",
@@ -305,7 +300,12 @@ function normalizeGenericLayoutSlot(slot) {
 
   const fieldId = typeof slot.fieldId === "string" ? slot.fieldId : null;
   const label = typeof slot.label === "string" ? slot.label : null;
-  const showLabel = typeof slot.showLabel === "boolean" ? slot.showLabel : undefined;
+  const showLabel =
+    typeof slot.showLabel === "boolean"
+      ? slot.showLabel
+      : typeof slot.showName === "boolean"
+        ? slot.showName
+        : undefined;
 
   if (!fieldId) return null;
 
@@ -357,7 +357,7 @@ function normalizeGenericLayout(layout, template) {
     return buildLegacyGenericLayout(template);
   }
 
-  const rows = layout.cardRows.slice(0, 3);
+  const rows = layout.cardRows;
   const normalizedRows = rows.map((row, idx) => {
     const defaultType = idx < 2 ? "two" : "one";
     const rowType = row?.type === "one" || row?.type === "two" ? row.type : defaultType;
@@ -387,6 +387,21 @@ function normalizeGenericLayout(layout, template) {
   return { cardRows: normalizedRows };
 }
 
+function buildGenericRowSlotIds(rowType, rowIndex) {
+  const rowNumber = rowIndex + 1;
+
+  if (rowType === "one") {
+    const valueId = rowNumber === 3 ? `r${rowNumber}` : `r${rowNumber}_value`;
+    return { type: "one", value: valueId };
+  }
+
+  return {
+    type: "two",
+    left: `r${rowNumber}_left`,
+    right: `r${rowNumber}_right`,
+  };
+}
+
 function isGoogleGenericBarcodeEnabled(template) {
   const enabled = template?.wallet?.google?.genericConfig?.barcode?.enabled;
   return enabled !== false;
@@ -410,11 +425,10 @@ function buildGenericLayoutSlots({ template }) {
   const slots = [];
 
   layout.cardRows.forEach((row, idx) => {
-    const slotIds = GENERIC_LAYOUT_SLOT_IDS[idx];
+    const rowType = row?.type === "one" ? "one" : "two";
+    const slotIds = buildGenericRowSlotIds(rowType, idx);
 
-    if (!slotIds) return;
-
-    if (row?.type === "one") {
+    if (rowType === "one") {
       if (row?.value?.fieldId) {
         slots.push({
           slotId: slotIds.value,
@@ -449,40 +463,7 @@ function buildGenericLayoutSlots({ template }) {
 }
 
 function buildGenericFrontSlots({ template }) {
-  const layout = normalizeGenericLayout(
-    template?.wallet?.google?.genericConfig?.layout,
-    template
-  );
-
-  const slots = [];
-  const pushSlot = (slotId, slot) => {
-    if (!slotId) return;
-
-    slots.push({
-      slotId,
-      fieldId: slot?.fieldId || null,
-      label: slot?.label || null,
-      showLabel: slot?.showLabel ?? null,
-    });
-  };
-
-  layout.cardRows.forEach((row, idx) => {
-    if (slots.length >= 4) return;
-
-    const slotIds = GENERIC_LAYOUT_SLOT_IDS[idx];
-    if (!slotIds) return;
-
-    if (row?.type === "one") {
-      pushSlot(slotIds.value, row?.value);
-      return;
-    }
-
-    pushSlot(slotIds.left, row?.left);
-    if (slots.length >= 4) return;
-    pushSlot(slotIds.right, row?.right);
-  });
-
-  return slots;
+  return buildGenericLayoutSlots({ template });
 }
 
 function resolveGenericFieldLabel(fieldId) {
@@ -603,10 +584,10 @@ function buildGenericClassTemplateInfo({ template }) {
   const rows = [];
 
   layout.cardRows.forEach((row, idx) => {
-    const slotIds = GENERIC_LAYOUT_SLOT_IDS[idx];
-    if (!slotIds) return;
+    const rowType = row?.type === "one" ? "one" : "two";
+    const slotIds = buildGenericRowSlotIds(rowType, idx);
 
-    if (row?.type === "one") {
+    if (rowType === "one") {
       const slotIndex = slotIndexById.get(slotIds.value);
       if (slotIndex == null) return;
 
