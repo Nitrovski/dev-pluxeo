@@ -14,7 +14,7 @@ const DEFAULT_PROGRAM_NAME = "Pluxeo";
 const DEFAULT_PRIMARY_COLOR = "#FF9900";
 const DEV_DEFAULT_LOGO_URL =
   "https://storage.googleapis.com/wallet-lab-tools-codelab-artifacts/LoyaltyClass/loyalty_class_logo.png";
-const MAX_TEXT_MODULES = 5;
+const MAX_TEXT_MODULES = 10;
 const PROMO_MAX_LENGTH = 60;
 const GENERIC_PROMO_MAX_LENGTH = 40;
 const MAX_BARCODE_LENGTH = 120;
