@@ -508,6 +508,12 @@ async function cardTemplateRoutes(fastify, options) {
         }
       }
 
+      console.log("TEMPLATE_SAVE_RESPONSE_LAYOUT", {
+       merchantId,
+       effectivePassType,
+       cardRows: toApi(template, merchantId)?.wallet?.google?.genericConfig?.layout?.cardRows,
+      });
+      
       return reply.send({
         ...toApi(template, merchantId),
         googleWallet: walletSyncResult,
