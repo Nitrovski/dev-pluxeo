@@ -85,7 +85,6 @@ function normalizeGenericLayout(layout) {
   return { cardRows: normalizedRows };
 }
 
-
 function hasDuplicateLayoutFields(layout) {
   if (!isObj(layout) || !Array.isArray(layout.cardRows)) return false;
 
@@ -185,8 +184,7 @@ function normalizeWallet(inWallet) {
         genericConfigIn.showStampsModule !== undefined
           ? Boolean(genericConfigIn.showStampsModule)
           : true,
-      showPromo:
-        genericConfigIn.showPromo !== undefined ? Boolean(genericConfigIn.showPromo) : true,
+      showPromo: genericConfigIn.showPromo !== undefined ? Boolean(genericConfigIn.showPromo) : true,
       showWebsite: Boolean(genericConfigIn.showWebsite),
       showOpeningHours: Boolean(genericConfigIn.showOpeningHours),
       showEmail: Boolean(genericConfigIn.showEmail),
@@ -301,6 +299,7 @@ async function cardTemplateRoutes(fastify, options) {
                 showEmail: false,
                 showTier: false,
                 barcode: { enabled: true, type: "QR_CODE" },
+                layout: DEFAULT_GENERIC_LAYOUT,
               },
             },
             apple: {},
@@ -332,16 +331,18 @@ async function cardTemplateRoutes(fastify, options) {
       const payload = request.body || {};
 
       console.log("TEMPLATE_PUT_INCOMING_LAYOUT", {
-      merchantId,
-      layout: payload?.wallet?.google?.genericConfig?.layout?.cardRows,
+        merchantId,
+        layout: payload?.wallet?.google?.genericConfig?.layout?.cardRows,
       });
 
-     console.log("TEMPLATE_PUT_INCOMING_ROOT_FIELDS", {
-     merchantId,
-     promoText: payload?.promoText,
-     customMessage: payload?.customMessage,
-     });
-      
+      console.log("TEMPLATE_PUT_INCOMING_ROOT_FIELDS", {
+        merchantId,
+        promoText: payload?.promoText,
+        customMessage: payload?.customMessage,
+        openingHours: payload?.openingHours,
+        websiteUrl: payload?.websiteUrl,
+      });
+
       if (hasDuplicateLayoutFields(payload?.wallet?.google?.genericConfig?.layout)) {
         return reply.code(400).send({ error: "Duplicate field in layout" });
       }
@@ -374,20 +375,23 @@ async function cardTemplateRoutes(fastify, options) {
         },
       };
 
-      // vyčisti undefined hodnoty
+      // vyčisti undefined/null hodnoty (null bereme jako "neposláno", ať se ti to nevymaže v DB)
       const $set = { merchantId };
 
       for (const [key, value] of Object.entries(update)) {
-        if (value === undefined) continue;
+        if (value === undefined || value === null) continue;
 
         if (key === "rules") {
           const rules = {};
-          if (value.freeStampsToReward !== undefined) {
+
+          if (value.freeStampsToReward !== undefined && value.freeStampsToReward !== null) {
             rules.freeStampsToReward = pickNumber(value.freeStampsToReward, 10);
           }
-          if (value.couponText !== undefined) {
+
+          if (value.couponText !== undefined && value.couponText !== null) {
             rules.couponText = pickString(value.couponText, "");
           }
+
           if (Object.keys(rules).length > 0) {
             $set.rules = rules;
           }
@@ -403,20 +407,23 @@ async function cardTemplateRoutes(fastify, options) {
           $set["wallet.google.issuerName"] = pickString(g.issuerName, "");
           $set["wallet.google.programName"] = pickString(g.programName, "");
           $set["wallet.google.logoUrl"] = pickString(g.logoUrl, "");
-          $set["wallet.google.backgroundColor"] = pickString(g.backgroundColor, "#FF9900") || "#FF9900";
+          $set["wallet.google.backgroundColor"] =
+            pickString(g.backgroundColor, "#FF9900") || "#FF9900";
           $set["wallet.google.heroImageUrl"] = pickString(g.heroImageUrl, "");
           $set["wallet.google.links"] = Array.isArray(g.links) ? g.links : [];
           $set["wallet.google.textModules"] = Array.isArray(g.textModules) ? g.textModules : [];
-          $set["wallet.google.genericConfig"] = g.genericConfig || {
-            enabled: false,
-            showStampsModule: true,
-            showPromo: true,
-            showWebsite: false,
-            showOpeningHours: false,
-            showEmail: false,
-            showTier: false,
-            barcode: { enabled: true, type: "QR_CODE" },
-          };
+          $set["wallet.google.genericConfig"] =
+            g.genericConfig || {
+              enabled: false,
+              showStampsModule: true,
+              showPromo: true,
+              showWebsite: false,
+              showOpeningHours: false,
+              showEmail: false,
+              showTier: false,
+              barcode: { enabled: true, type: "QR_CODE" },
+              layout: DEFAULT_GENERIC_LAYOUT,
+            };
 
           // save apple (keep stable object)
           $set["wallet.apple"] = wallet.apple || {};
@@ -427,6 +434,7 @@ async function cardTemplateRoutes(fastify, options) {
         } else if (key === "logoUrl") {
           $set.logoUrl = pickString(value, "");
         } else if (typeof value === "string") {
+          // POZOR: prázdný string je validní (uživatel může chtít vymazat hodnotu)
           $set[key] = value;
         } else {
           $set[key] = value;
@@ -495,26 +503,22 @@ async function cardTemplateRoutes(fastify, options) {
               .select({ _id: 1 })
               .lean();
 
-            await createConcurrencyQueue(
-              syncWalletObjectsConcurrency,
-              cardsToSync,
-              async (card) => {
-                try {
-                  await ensureLoyaltyObjectForCard({
-                    merchantId,
-                    cardId: card._id,
-                    forcePatch: true,
-                  });
-                  walletSyncResult.objectsSynced += 1;
-                } catch (objectErr) {
-                  walletSyncResult.objectsFailed += 1;
-                  request.log.warn(
-                    { err: objectErr, cardId: card?._id },
-                    "google wallet object sync failed"
-                  );
-                }
+            await createConcurrencyQueue(syncWalletObjectsConcurrency, cardsToSync, async (card) => {
+              try {
+                await ensureLoyaltyObjectForCard({
+                  merchantId,
+                  cardId: card._id,
+                  forcePatch: true,
+                });
+                walletSyncResult.objectsSynced += 1;
+              } catch (objectErr) {
+                walletSyncResult.objectsFailed += 1;
+                request.log.warn(
+                  { err: objectErr, cardId: card?._id },
+                  "google wallet object sync failed"
+                );
               }
-            );
+            });
           } catch (objectsSyncErr) {
             request.log.warn({ err: objectsSyncErr }, "google wallet objects sync batch failed");
           }
@@ -522,11 +526,11 @@ async function cardTemplateRoutes(fastify, options) {
       }
 
       console.log("TEMPLATE_SAVE_RESPONSE_LAYOUT", {
-       merchantId,
-       effectivePassType,
-       cardRows: toApi(template, merchantId)?.wallet?.google?.genericConfig?.layout?.cardRows,
+        merchantId,
+        effectivePassType,
+        cardRows: toApi(template, merchantId)?.wallet?.google?.genericConfig?.layout?.cardRows,
       });
-      
+
       return reply.send({
         ...toApi(template, merchantId),
         googleWallet: walletSyncResult,
