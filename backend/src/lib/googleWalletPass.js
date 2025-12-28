@@ -592,7 +592,7 @@ function buildGenericClassTemplateInfo({ template }) {
       if (slotIndex == null) return;
 
       rows.push({
-        oneItem: buildTextModuleTemplateForIndex(slotIndex),
+        oneItem: { item: buildTextModuleTemplateForIndex(slotIndex) },
       });
       return;
     }
@@ -614,7 +614,7 @@ function buildGenericClassTemplateInfo({ template }) {
 
     const soloIndex = leftIndex != null ? leftIndex : rightIndex;
     rows.push({
-      oneItem: buildTextModuleTemplateForIndex(soloIndex),
+      oneItem: { item: buildTextModuleTemplateForIndex(soloIndex) },
     });
   });
 
@@ -806,8 +806,8 @@ function buildGenericFrontFields({ card, template }) {
     if (header) {
       module.header = header;
     } else {
-     // module.allowHeaderless = true;
-      module.header = "\u00A0";
+      module.allowHeaderless = true;
+      
     }
 
     return module;
