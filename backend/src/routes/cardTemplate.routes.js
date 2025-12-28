@@ -27,7 +27,7 @@ const DEFAULT_GENERIC_LAYOUT = {
   cardRows: [
     { type: "two", left: null, right: null },
     { type: "two", left: null, right: null },
-    { type: "one", value: null },
+    { type: "two", left: null, right: null },
   ],
 };
 
@@ -49,23 +49,28 @@ function normalizeLayoutSlot(slot) {
 }
 
 function normalizeGenericLayout(layout) {
+  // vždy vracíme 3× two
+  const emptyTwo = () => ({ type: "two", left: null, right: null });
+
   if (!isObj(layout) || !Array.isArray(layout.cardRows)) {
     return DEFAULT_GENERIC_LAYOUT;
   }
 
   const rows = layout.cardRows;
 
-  const normalizedRows = rows.map((row, idx) => {
-    const defaultType = idx < 2 ? "two" : "one";
-    const rowType = row?.type === "one" || row?.type === "two" ? row.type : defaultType;
+  const normalizedRows = rows.slice(0, 3).map((row) => {
+    const rowType = row?.type === "one" || row?.type === "two" ? row.type : "two";
 
+    // legacy: one/value -> two/left/right
     if (rowType === "one") {
       return {
-        type: "one",
-        value: normalizeLayoutSlot(row?.value),
+        type: "two",
+        left: normalizeLayoutSlot(row?.value),
+        right: null,
       };
     }
 
+    // standard: two/left/right
     return {
       type: "two",
       left: normalizeLayoutSlot(row?.left),
@@ -74,15 +79,12 @@ function normalizeGenericLayout(layout) {
   });
 
   while (normalizedRows.length < 3) {
-    if (normalizedRows.length < 2) {
-      normalizedRows.push({ type: "two", left: null, right: null });
-    } else {
-      normalizedRows.push({ type: "one", value: null });
-    }
+    normalizedRows.push(emptyTwo());
   }
 
   return { cardRows: normalizedRows };
 }
+
 
 function hasDuplicateLayoutFields(layout) {
   if (!isObj(layout) || !Array.isArray(layout.cardRows)) return false;
