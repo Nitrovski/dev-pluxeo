@@ -806,7 +806,8 @@ function buildGenericFrontFields({ card, template }) {
     if (header) {
       module.header = header;
     } else {
-      module.allowHeaderless = true;
+     // module.allowHeaderless = true;
+      module.header = "\u00A0";
     }
 
     return module;
