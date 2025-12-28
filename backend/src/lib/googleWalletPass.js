@@ -24,7 +24,7 @@ const DEFAULT_GENERIC_LAYOUT = {
   cardRows: [
     { type: "two", left: null, right: null },
     { type: "two", left: null, right: null },
-    { type: "one", value: null },
+    { type: "two", left: null, right: null },
   ],
 };
 const GENERIC_FIELD_LABELS = {
@@ -344,8 +344,9 @@ function buildLegacyGenericLayout(template) {
       right: fields[3] ? { fieldId: fields[3] } : null,
     },
     {
-      type: "one",
-      value: fields[4] ? { fieldId: fields[4] } : null,
+      type: "two",
+      left: fields[4] ? { fieldId: fields[4] } : null,
+      right: fields[5] ? { fieldId: fields[5] } : null,
     },
   ];
 
@@ -359,29 +360,18 @@ function normalizeGenericLayout(layout, template) {
 
   const rows = layout.cardRows;
   const normalizedRows = rows.map((row, idx) => {
-    const defaultType = idx < 2 ? "two" : "one";
-    const rowType = row?.type === "one" || row?.type === "two" ? row.type : defaultType;
-
-    if (rowType === "one") {
-      return {
-        type: "one",
-        value: normalizeGenericLayoutSlot(row?.value),
-      };
-    }
+    const rowTypeCandidate = row?.type === "one" || row?.type === "two" ? row.type : "two";
+    const valueSlot = rowTypeCandidate === "one" ? normalizeGenericLayoutSlot(row?.value) : null;
 
     return {
       type: "two",
-      left: normalizeGenericLayoutSlot(row?.left),
+      left: valueSlot ?? normalizeGenericLayoutSlot(row?.left),
       right: normalizeGenericLayoutSlot(row?.right),
     };
   });
 
   while (normalizedRows.length < 3) {
-    if (normalizedRows.length < 2) {
-      normalizedRows.push({ type: "two", left: null, right: null });
-    } else {
-      normalizedRows.push({ type: "one", value: null });
-    }
+    normalizedRows.push({ type: "two", left: null, right: null });
   }
 
   return { cardRows: normalizedRows };
@@ -391,8 +381,7 @@ function buildGenericRowSlotIds(rowType, rowIndex) {
   const rowNumber = rowIndex + 1;
 
   if (rowType === "one") {
-    const valueId = rowNumber === 3 ? `r${rowNumber}` : `r${rowNumber}_value`;
-    return { type: "one", value: valueId };
+    return { type: "one", value: `r${rowNumber}_value` };
   }
 
   return {
@@ -429,34 +418,27 @@ function buildGenericLayoutSlots({ template }) {
     const slotIds = buildGenericRowSlotIds(rowType, idx);
 
     if (rowType === "one") {
-      if (row?.value?.fieldId) {
-        slots.push({
-          slotId: slotIds.value,
-          fieldId: row.value.fieldId,
-          label: row.value.label,
-          showLabel: row.value.showLabel,
-        });
-      }
+      slots.push({
+        slotId: slotIds.value,
+        fieldId: row?.value?.fieldId ?? null,
+        label: row?.value?.label ?? null,
+        showLabel: row?.value?.showLabel,
+      });
       return;
     }
 
-    if (row?.left?.fieldId) {
-      slots.push({
-        slotId: slotIds.left,
-        fieldId: row.left.fieldId,
-        label: row.left.label,
-        showLabel: row.left.showLabel,
-      });
-    }
-
-    if (row?.right?.fieldId) {
-      slots.push({
-        slotId: slotIds.right,
-        fieldId: row.right.fieldId,
-        label: row.right.label,
-        showLabel: row.right.showLabel,
-      });
-    }
+    slots.push({
+      slotId: slotIds.left,
+      fieldId: row?.left?.fieldId ?? null,
+      label: row?.left?.label ?? null,
+      showLabel: row?.left?.showLabel,
+    });
+    slots.push({
+      slotId: slotIds.right,
+      fieldId: row?.right?.fieldId ?? null,
+      label: row?.right?.label ?? null,
+      showLabel: row?.right?.showLabel,
+    });
   });
 
   return slots;
@@ -807,7 +789,6 @@ function buildGenericFrontFields({ card, template }) {
       module.header = header;
     } else {
       module.allowHeaderless = true;
-      
     }
 
     return module;
@@ -1707,7 +1688,7 @@ export async function syncGoogleGenericForMerchantTemplate({
     merchantId,
     layoutRowsCount,
     activeSlotCount,
-    sampleSlotIds: layoutSlots.map((slot) => slot.slotId),
+    sampleSlotIds: layoutSlots.slice(0, 6).map((slot) => slot.slotId),
   });
 
   const totalCards = await Card.countDocuments({ merchantId });
@@ -1775,6 +1756,9 @@ export async function syncGoogleGenericForMerchantTemplate({
             merchantId,
             objectId,
             textModulesCount: Array.isArray(textModulesData) ? textModulesData.length : 0,
+            textModulesSampleIds: Array.isArray(textModulesData)
+              ? textModulesData.slice(0, 6).map((module) => module?.id)
+              : [],
             hiddenLabelCount,
             hasLogoUrl: Boolean(templateValue?.wallet?.google?.logoUrl),
             backgroundColor:
