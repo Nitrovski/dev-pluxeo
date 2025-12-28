@@ -462,7 +462,16 @@ function buildGenericLayoutSlots({ template }) {
       showLabel: row?.right?.showLabel,
     });
   });
-
+  
+  console.log(
+    "GW_GENERIC_LAYOUT_SLOTS",
+    slots.map((s) => ({
+      slotId: s.slotId,
+      fieldId: s.fieldId,
+      label: s.label,
+      showLabel: s.showLabel,
+    }))
+  );
   return slots;
 }
 
