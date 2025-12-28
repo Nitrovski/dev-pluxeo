@@ -411,6 +411,28 @@ function buildGenericLayoutSlots({ template }) {
     template
   );
 
+  console.log("GW_GENERIC_LAYOUT_NORMALIZED", {
+  rows: layout.cardRows.map((row, i) => ({
+    row: i + 1,
+    type: row.type,
+    left: row.left
+      ? {
+          fieldId: row.left.fieldId,
+          label: row.left.label,
+          showLabel: row.left.showLabel,
+        }
+      : null,
+    right: row.right
+      ? {
+          fieldId: row.right.fieldId,
+          label: row.right.label,
+          showLabel: row.right.showLabel,
+        }
+      : null,
+  })),
+});
+
+  
   const slots = [];
 
   layout.cardRows.slice(0, 3).forEach((row, idx) => {
