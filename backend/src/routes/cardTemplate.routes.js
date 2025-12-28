@@ -331,6 +331,17 @@ async function cardTemplateRoutes(fastify, options) {
       const merchantId = userId;
       const payload = request.body || {};
 
+      console.log("TEMPLATE_PUT_INCOMING_LAYOUT", {
+      merchantId,
+      layout: payload?.wallet?.google?.genericConfig?.layout?.cardRows,
+      });
+
+     console.log("TEMPLATE_PUT_INCOMING_ROOT_FIELDS", {
+     merchantId,
+     promoText: payload?.promoText,
+     customMessage: payload?.customMessage,
+     });
+      
       if (hasDuplicateLayoutFields(payload?.wallet?.google?.genericConfig?.layout)) {
         return reply.code(400).send({ error: "Duplicate field in layout" });
       }
