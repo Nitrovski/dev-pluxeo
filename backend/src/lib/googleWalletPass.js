@@ -36,8 +36,8 @@ const GENERIC_FIELD_LABELS = {
   customMessage: "Zpráva",
 };
 const GENERIC_FIELD_META = {
-  promoText: { defaultShowLabel: false },
-  customMessage: { defaultShowLabel: false },
+  promoText: { defaultShowLabel: true },
+  customMessage: { defaultShowLabel: true },
   stamps: { defaultShowLabel: true },
   rewards: { defaultShowLabel: true },
   openingHours: { defaultShowLabel: true },
