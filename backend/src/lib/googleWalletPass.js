@@ -796,35 +796,46 @@ function buildGenericLinksModuleData({ template }) {
 function buildGenericFrontFields({ card, template }) {
   const slots = buildGenericFrontSlots({ template });
 
-  return slots.map((slot) => {
-    const showLabel =
-      slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
-    const header = showLabel
-      ? slot.label || (slot.fieldId ? resolveGenericFieldLabel(slot.fieldId) : null)
-      : null;
-    const resolvedBody = slot.fieldId
-      ? resolveGenericFieldValue({
-          fieldId: slot.fieldId,
-          card,
-          template,
-        })
-      : "";
-    const body = trimTextModuleValue(resolvedBody) || "-";
+  return slots
+    .map((slot) => {
+      const showLabel =
+        slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
 
-    const module = {
-      id: slot.slotId,
-      body,
-    };
+      const header = showLabel
+        ? slot.label || (slot.fieldId ? resolveGenericFieldLabel(slot.fieldId) : null)
+        : null;
 
-    if (header) {
-      module.header = header;
-    } else {
-      module.allowHeaderless = true;
-    }
+      const resolvedBody = slot.fieldId
+        ? resolveGenericFieldValue({
+            fieldId: slot.fieldId,
+            card,
+            template,
+          })
+        : "";
 
-    return module;
-  });
+      const body = trimTextModuleValue(resolvedBody);
+
+      // ✅ když není hodnota, modul vůbec nevytváříme (žádné pomlčky)
+      if (!body) {
+        return null;
+      }
+
+      const module = {
+        id: slot.slotId,
+        body,
+      };
+
+      if (header) {
+        module.header = header;
+      } else {
+        module.allowHeaderless = true;
+      }
+
+      return module;
+    })
+    .filter(Boolean);
 }
+
 
 async function buildGenericClassPayload({ classId, template }) {
   const classTemplateInfo = buildGenericClassTemplateInfo({ template });
