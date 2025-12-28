@@ -565,10 +565,8 @@ function buildTextModuleTemplate(index) {
 
 function buildTextModuleTemplateForIndex(index) {
   return {
-    templateItem: {
-      firstValue: {
-        fields: [{ fieldPath: `object.textModulesData[${index}]` }],
-      },
+    firstValue: {
+      fields: [{ fieldPath: `object.textModulesData[${index}]` }],
     },
   };
 }
@@ -958,13 +956,6 @@ function extractGenericClassDebugFields(genericClass) {
   const linkCount = Array.isArray(genericClass?.linksModuleData?.uris)
     ? genericClass.linksModuleData.uris.length
     : 0;
-  const classTemplateInfo =
-    genericClass?.classTemplateInfo || genericClass?.cardTemplateInfo;
-  const rowCount = Array.isArray(
-    classTemplateInfo?.cardTemplateOverride?.cardRowTemplateInfos
-  )
-    ? classTemplateInfo.cardTemplateOverride.cardRowTemplateInfos.length
-    : 0;
   const hasTemplateInfo = Boolean(
     genericClass?.classTemplateInfo || genericClass?.cardTemplateInfo
   );
@@ -978,7 +969,6 @@ function extractGenericClassDebugFields(genericClass) {
   return {
     hasTemplateInfo,
     linksCount: linkCount,
-    templateRows: rowCount,
     textModulesCount,
     imageModulesCount,
   };
