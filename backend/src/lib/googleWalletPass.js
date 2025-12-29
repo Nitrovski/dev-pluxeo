@@ -1023,6 +1023,13 @@ async function buildGenericObjectPayload({
   const sanitizedTextModules = compactTextModulesData(textModulesData);
   payload.textModulesData = sanitizedTextModules;
 
+  const linksModuleData = buildGenericLinksModuleData({ template: templateDoc });
+  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
+
+  if (sanitizedLinksModule) {
+    payload.linksModuleData = sanitizedLinksModule;
+  }
+
   const terms = String(templateDoc?.termsText || "").trim();
   if (terms) {
     payload.customData = {
@@ -1031,13 +1038,6 @@ async function buildGenericObjectPayload({
     };
   } else if (payload.customData) {
     delete payload.customData.termsText;
-  }
-
-  const linksModuleData = buildGenericLinksModuleData({ template: templateDoc });
-  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
-
-  if (sanitizedLinksModule) {
-    payload.linksModuleData = sanitizedLinksModule;
   }
 
   return payload;
