@@ -27,6 +27,14 @@ const DEFAULT_GENERIC_LAYOUT = {
     { type: "two", left: null, right: null },
   ],
 };
+const GENERIC_FRONT_SLOT_IDS = [
+  "r1_left",
+  "r1_right",
+  "r2_left",
+  "r2_right",
+  "r3_left",
+  "r3_right",
+];
 const GENERIC_FIELD_LABELS = {
   promoText: "AKCE",
   stamps: "Razítka",
@@ -427,15 +435,17 @@ function normalizeGenericLayout(layout, template) {
 
 function buildGenericRowSlotIds(rowType, rowIndex) {
   const rowNumber = rowIndex + 1;
+  const left = `r${rowNumber}_left`;
+  const right = `r${rowNumber}_right`;
 
   if (rowType === "one") {
-    return { type: "one", value: `r${rowNumber}_value` };
+    return { type: "one", value: left, left, right };
   }
 
   return {
     type: "two",
-    left: `r${rowNumber}_left`,
-    right: `r${rowNumber}_right`,
+    left,
+    right,
   };
 }
 
@@ -489,10 +499,16 @@ function buildGenericLayoutSlots({ template }) {
 
     if (rowType === "one") {
       slots.push({
-        slotId: slotIds.value,
+        slotId: slotIds.left,
         fieldId: row?.value?.fieldId ?? null,
         label: row?.value?.label ?? null,
         showLabel: row?.value?.showLabel,
+      });
+      slots.push({
+        slotId: slotIds.right,
+        fieldId: null,
+        label: null,
+        showLabel: undefined,
       });
       return;
     }
@@ -677,8 +693,7 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
   );
   const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
   const frontSlots = buildGenericFrontSlots({ template });
-  const frontCount = frontSlots.length;
-  const termsIndex = frontCount;
+  const termsIndex = GENERIC_FRONT_SLOT_IDS.length;
   const slotIndexById = new Map(
     frontSlots.map((slot, index) => [slot.slotId, index])
   );
@@ -895,44 +910,59 @@ function buildGenericLinksModuleData({ template }) {
 function buildGenericFrontFields({ card, template }) {
   const slots = buildGenericFrontSlots({ template });
 
-  return slots
-    .map((slot) => {
-      const showLabel =
-        slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
+  return slots.map((slot, idx) => {
+    const slotId = GENERIC_FRONT_SLOT_IDS[idx] || slot.slotId;
+    const showLabel =
+      slot.showLabel ?? GENERIC_FIELD_META[slot.fieldId]?.defaultShowLabel ?? true;
 
-      const header = showLabel
-        ? slot.label || (slot.fieldId ? resolveGenericFieldLabel(slot.fieldId) : null)
-        : null;
+    const header = showLabel
+      ? slot.label || (slot.fieldId ? resolveGenericFieldLabel(slot.fieldId) : null)
+      : null;
 
-      const resolvedBody = slot.fieldId
-        ? resolveGenericFieldValue({
-            fieldId: slot.fieldId,
-            card,
-            template,
-          })
-        : "";
+    const resolvedBody = slot.fieldId
+      ? resolveGenericFieldValue({
+          fieldId: slot.fieldId,
+          card,
+          template,
+        })
+      : "";
 
-      const body = trimTextModuleValue(resolvedBody);
+    const body = trimTextModuleValue(resolvedBody);
 
-      // ✅ když není hodnota, modul vůbec nevytváříme (žádné pomlčky)
-      if (!body) {
-        return null;
-      }
+    const module = {
+      id: slotId,
+      body: body || "",
+    };
 
-      const module = {
-        id: slot.slotId,
-        body,
-      };
+    if (header) {
+      module.header = header;
+    } else {
+      module.allowHeaderless = true;
+    }
 
-      if (header) {
-        module.header = header;
-      } else {
-        module.allowHeaderless = true;
-      }
+    return module;
+  });
+}
 
-      return module;
-    })
-    .filter(Boolean);
+function normalizeGenericFrontTextModules(textModulesData) {
+  const frontModules = Array.isArray(textModulesData) ? textModulesData : [];
+
+  return GENERIC_FRONT_SLOT_IDS.map((slotId, idx) => {
+    const module =
+      frontModules.find((item) => item?.id === slotId) || frontModules[idx] || {};
+    const header = trimTextModuleValue(module?.header);
+    const body = trimTextModuleValue(module?.body);
+
+    const normalized = { id: slotId, body: body || "" };
+
+    if (header) {
+      normalized.header = header;
+    } else {
+      normalized.allowHeaderless = true;
+    }
+
+    return normalized;
+  });
 }
 
 
@@ -1040,9 +1070,9 @@ async function buildGenericObjectPayload({
     };
   }
 
-  const sanitizedTextModules = compactTextModulesData(textModulesData);
+  const normalizedFrontModules = normalizeGenericFrontTextModules(textModulesData);
   const terms = String(templateDoc?.termsText || "").trim();
-  payload.textModulesData = upsertTermsTextModuleGeneric(sanitizedTextModules, terms);
+  payload.textModulesData = upsertTermsTextModuleGeneric(normalizedFrontModules, terms);
 
   const linksModuleData = buildGenericLinksModuleData({ template: templateDoc });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
@@ -1201,6 +1231,19 @@ function logGenericObjectPatchDetails({ objectId, objectPayload }) {
     textModuleIds,
     hasTermsTextModule: textModuleIds.includes("terms"),
     lastTextModuleId: textModuleIds.at(-1) ?? null,
+  });
+}
+
+function logGenericTermsPosition({ objectId, payload }) {
+  const textModules = Array.isArray(payload?.textModulesData)
+    ? payload.textModulesData
+    : [];
+
+  console.log("GW_GENERIC_TERMS_POSITION", {
+    objectId,
+    textModulesLen: textModules.length,
+    ids: textModules.map((module) => module?.id),
+    termsIndex: textModules.findIndex((module) => module?.id === "terms"),
   });
 }
 
@@ -1885,6 +1928,10 @@ export async function ensureGenericObjectForCard({
           objectId,
           objectPayload: genericObjectPayload,
         });
+        logGenericTermsPosition({
+          objectId,
+          payload: genericObjectPayload,
+        });
         await walletRequest({
           method: "PATCH",
           path: `/walletobjects/v1/genericObject/${objectId}`,
@@ -2130,6 +2177,10 @@ export async function syncGoogleGenericForMerchantTemplate({
                 : [],
             });
           }
+          logGenericTermsPosition({
+            objectId,
+            payload: genericObjectPayload,
+          });
           await walletRequest({
             method: "PATCH",
             path: `/walletobjects/v1/genericObject/${objectId}`,
@@ -2302,12 +2353,11 @@ export async function updateGoogleWalletObjectForCard({
     });
     normalizedBarcode = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
   }
-  const textModulesData = compactTextModulesData(
+  const textModulesData = normalizeGenericFrontTextModules(
     buildGenericFrontFields({
       card,
       template,
-    }),
-    { preserveFrontOrder: true }
+    })
   );
   const termsText = String(template?.termsText || "").trim();
 
@@ -2359,6 +2409,11 @@ export async function updateGoogleWalletObjectForCard({
   logGenericObjectPatchDetails({
     objectId,
     objectPayload: patchPayload,
+  });
+
+  logGenericTermsPosition({
+    objectId,
+    payload: patchPayload,
   });
 
   await walletRequest({
