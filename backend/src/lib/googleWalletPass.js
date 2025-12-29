@@ -1994,6 +1994,7 @@ export async function syncGoogleGenericForMerchantTemplate({
   let processed = 0;
   let errors = 0;
   let sampleLogged = 0;
+  let termsDebugLogged = 0;
 
   while (true) {
     const query = { merchantId };
@@ -2046,6 +2047,22 @@ export async function syncGoogleGenericForMerchantTemplate({
           template: templateValue,
           customer,
         });
+        const templateTerms = String(templateValue?.termsText || "").trim();
+        const payloadTerms = String(genericObjectPayload?.customData?.termsText || "").trim();
+        const shouldLogTermsDebug = termsDebugLogged < 2;
+
+        if (shouldLogTermsDebug) {
+          termsDebugLogged += 1;
+          console.log("GW_GENERIC_TERMS_DEBUG_PREPATCH", {
+            merchantId,
+            objectId,
+            templateTermsLen: templateTerms.length,
+            payloadTermsLen: payloadTerms.length,
+            payloadCustomDataKeys: genericObjectPayload?.customData
+              ? Object.keys(genericObjectPayload.customData)
+              : [],
+          });
+        }
 
         if (sampleLogged < 2) {
           sampleLogged += 1;
@@ -2125,6 +2142,22 @@ export async function syncGoogleGenericForMerchantTemplate({
             body: genericObjectPayload,
           });
 
+          if (shouldLogTermsDebug) {
+            const savedObject = await walletRequest({
+              method: "GET",
+              path: `/walletobjects/v1/genericObject/${objectId}`,
+            });
+            const savedTerms = String(savedObject?.customData?.termsText || "").trim();
+            console.log("GW_GENERIC_TERMS_DEBUG_SAVED", {
+              merchantId,
+              objectId,
+              savedTermsLen: savedTerms.length,
+              savedCustomDataKeys: savedObject?.customData
+                ? Object.keys(savedObject.customData)
+                : [],
+            });
+          }
+
           if (googleWalletConfig.isDevEnv) {
             const savedObject = await walletRequest({
               method: "GET",
@@ -2145,6 +2178,21 @@ export async function syncGoogleGenericForMerchantTemplate({
             path: "/walletobjects/v1/genericObject",
             body: genericObjectPayload,
           });
+          if (shouldLogTermsDebug) {
+            const savedObject = await walletRequest({
+              method: "GET",
+              path: `/walletobjects/v1/genericObject/${objectId}`,
+            });
+            const savedTerms = String(savedObject?.customData?.termsText || "").trim();
+            console.log("GW_GENERIC_TERMS_DEBUG_SAVED", {
+              merchantId,
+              objectId,
+              savedTermsLen: savedTerms.length,
+              savedCustomDataKeys: savedObject?.customData
+                ? Object.keys(savedObject.customData)
+                : [],
+            });
+          }
         }
 
         card.googleWallet = card.googleWallet || {};
