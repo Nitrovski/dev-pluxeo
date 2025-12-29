@@ -1022,15 +1022,12 @@ async function buildGenericObjectPayload({
   const sanitizedTextModules = compactTextModulesData(textModulesData);
   payload.textModulesData = sanitizedTextModules;
 
-  const t = String(template?.termsText || "").trim();
-  if (t) {
-    payload.customData = {
-      ...(payload.customData || {}),
-      termsText: t,
-    };
-  } else if (payload.customData) {
-    delete payload.customData.termsText;
-  }
+  const terms =
+    typeof template?.termsText === "string" ? template.termsText : "";
+  payload.customData = {
+    ...(payload.customData || {}),
+    termsText: terms,
+  };
 
   const linksModuleData = buildGenericLinksModuleData({ template });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
@@ -1709,6 +1706,22 @@ export async function ensureGenericClassForMerchant({
           classId,
           ...extractGenericClassDebugFields(genericClass),
         });
+        if (googleWalletConfig.isDevEnv) {
+          const detailsFieldPaths = Array.isArray(
+            genericClass?.classTemplateInfo?.detailsTemplateOverride?.detailsItemInfos
+          )
+            ? genericClass.classTemplateInfo.detailsTemplateOverride.detailsItemInfos.flatMap(
+                (info) =>
+                  info?.item?.firstValue?.fields?.map(
+                    (field) => field?.fieldPath
+                  ) || []
+              )
+            : [];
+          console.log("GW_GENERIC_CLASS_PATCH_DETAILS_FIELDS", {
+            classId,
+            detailsFieldPaths,
+          });
+        }
         logDetailsTemplateOverridePayload({
           label: "genericClass",
           classPayload: genericClass,
@@ -1816,6 +1829,13 @@ export async function ensureGenericObjectForCard({
     template: templateDoc,
     customer,
   });
+  if (googleWalletConfig.isDevEnv) {
+    console.log("GW_GENERIC_OBJECT_CUSTOMDATA", {
+      objectId,
+      hasCustomData: Boolean(genericObjectPayload.customData),
+      termsLen: (genericObjectPayload.customData?.termsText || "").length,
+    });
+  }
 
   let existed = false;
   let existingObject = null;
