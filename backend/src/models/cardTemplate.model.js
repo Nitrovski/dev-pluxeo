@@ -47,6 +47,7 @@ const CardTemplateSchema = new Schema(
     promoText: { type: String, default: "" },
     openingHours: { type: String, default: "" },
     websiteUrl: { type: String, default: "" },
+    termsText: { type: String, default: null, trim: true, maxlength: 1500 },
 
     /**
      * Pravidla programu

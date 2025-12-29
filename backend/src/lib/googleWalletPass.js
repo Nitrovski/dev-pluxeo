@@ -213,6 +213,47 @@ function trimTextModuleValue(value) {
   return String(value ?? "").trim();
 }
 
+function normalizeTermsText(template) {
+  const raw = template?.termsText;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : null;
+}
+
+function upsertTermsTextModule(textModulesData, template) {
+  const modules = Array.isArray(textModulesData) ? [...textModulesData] : [];
+  const termsText = normalizeTermsText(template);
+
+  if (termsText) {
+    const termsModule = {
+      id: "terms",
+      header: "Podmínky programu",
+      body: termsText,
+    };
+
+    const existingIndex = modules.findIndex((module) => module?.id === "terms");
+    if (existingIndex >= 0) {
+      modules[existingIndex] = termsModule;
+    } else {
+      modules.push(termsModule);
+    }
+  } else {
+    return modules.filter((module) => module?.id !== "terms");
+  }
+
+  if (modules.length > MAX_TEXT_MODULES) {
+    const trimmedModules = [...modules];
+    while (trimmedModules.length > MAX_TEXT_MODULES) {
+      const removeIndex = trimmedModules.findIndex((module) => module?.id !== "terms");
+      if (removeIndex === -1) break;
+      trimmedModules.splice(removeIndex, 1);
+    }
+    return trimmedModules.slice(0, MAX_TEXT_MODULES);
+  }
+
+  return modules;
+}
+
 function compactTextModulesData(textModulesData, { preserveFrontOrder = false } = {}) {
   if (!Array.isArray(textModulesData)) return [];
 
@@ -939,9 +980,7 @@ async function buildGenericObjectPayload({
 
   const sanitizedTextModules = compactTextModulesData(textModulesData);
 
-  if (sanitizedTextModules.length > 0) {
-    payload.textModulesData = sanitizedTextModules;
-  }
+  payload.textModulesData = upsertTermsTextModule(sanitizedTextModules, template);
 
   const linksModuleData = buildGenericLinksModuleData({ template });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
@@ -1163,9 +1202,7 @@ function buildLoyaltyObjectPayload({
 
   const sanitizedTextModules = compactTextModulesData(textModulesData);
 
-  if (sanitizedTextModules.length > 0) {
-    payload.textModulesData = sanitizedTextModules;
-  }
+  payload.textModulesData = upsertTermsTextModule(sanitizedTextModules, template);
 
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
 
@@ -1972,10 +2009,11 @@ export async function updateGoogleWalletObjectForCard({
     }),
     { preserveFrontOrder: true }
   );
+  const textModulesWithTerms = upsertTermsTextModule(textModulesData, template);
 
   const patchPayload = {
     state: "ACTIVE",
-    textModulesData,
+    textModulesData: textModulesWithTerms,
   };
 
   if (barcodeEnabled && normalizedBarcode) {
