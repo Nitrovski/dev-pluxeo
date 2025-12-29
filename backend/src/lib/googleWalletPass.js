@@ -625,22 +625,6 @@ function buildTextModuleTemplateForIndex(index) {
   };
 }
 
-function buildTermsDetailsTemplateOverride() {
-  return {
-    detailsTemplateOverride: {
-      detailsItemInfos: [
-        {
-          item: {
-            firstValue: {
-              fields: [{ fieldPath: "object.textModulesData['terms']" }],
-            },
-          },
-        },
-      ],
-    },
-  };
-}
-
 function buildGenericClassTemplateInfo({ template }) {
   const layout = normalizeGenericLayout(
     template?.wallet?.google?.genericConfig?.layout,
@@ -706,7 +690,6 @@ function buildGenericClassTemplateInfo({ template }) {
   }
 
   return {
-    ...buildTermsDetailsTemplateOverride(),
     cardTemplateOverride,
   };
 }
@@ -775,7 +758,6 @@ function buildClassTemplateInfo({ templateTextModuleCount, promoPresent = false 
   }
 
   return {
-    ...buildTermsDetailsTemplateOverride(),
     cardTemplateOverride: {
       cardBarcodeSectionDetails: {
         renderedBarcodes: [
@@ -1012,18 +994,9 @@ async function buildGenericObjectPayload({
 
 function extractClassDebugFields(loyaltyClass) {
   const templateOverride = loyaltyClass?.classTemplateInfo?.cardTemplateOverride;
-  const detailsOverride = loyaltyClass?.classTemplateInfo?.detailsTemplateOverride;
   const rowCount = Array.isArray(templateOverride?.cardRowTemplateInfos)
     ? templateOverride.cardRowTemplateInfos.length
     : 0;
-  const detailsItemsCount = Array.isArray(detailsOverride?.detailsItemInfos)
-    ? detailsOverride.detailsItemInfos.length
-    : 0;
-  const detailsFieldPaths = Array.isArray(detailsOverride?.detailsItemInfos)
-    ? detailsOverride.detailsItemInfos.flatMap(
-        (info) => info?.item?.firstValue?.fields?.map((field) => field?.fieldPath) || []
-      )
-    : [];
   const renderedBarcodeCount = Array.isArray(
     templateOverride?.cardBarcodeSectionDetails?.renderedBarcodes
   )
@@ -1038,8 +1011,6 @@ function extractClassDebugFields(loyaltyClass) {
     heroImageUrl: loyaltyClass?.heroImage?.sourceUri?.uri || null,
     templateRows: rowCount,
     renderedBarcodes: renderedBarcodeCount,
-    detailsItems: detailsItemsCount,
-    detailsFieldPaths,
   };
 }
 
@@ -1050,15 +1021,6 @@ function extractGenericClassDebugFields(genericClass) {
   const hasTemplateInfo = Boolean(
     genericClass?.classTemplateInfo || genericClass?.cardTemplateInfo
   );
-  const detailsOverride = genericClass?.classTemplateInfo?.detailsTemplateOverride;
-  const detailsItemsCount = Array.isArray(detailsOverride?.detailsItemInfos)
-    ? detailsOverride.detailsItemInfos.length
-    : 0;
-  const detailsFieldPaths = Array.isArray(detailsOverride?.detailsItemInfos)
-    ? detailsOverride.detailsItemInfos.flatMap(
-        (info) => info?.item?.firstValue?.fields?.map((field) => field?.fieldPath) || []
-      )
-    : [];
   const textModulesCount = Array.isArray(genericClass?.textModulesData)
     ? genericClass.textModulesData.length
     : 0;
@@ -1071,8 +1033,6 @@ function extractGenericClassDebugFields(genericClass) {
     linksCount: linkCount,
     textModulesCount,
     imageModulesCount,
-    detailsItems: detailsItemsCount,
-    detailsFieldPaths,
   };
 }
 
@@ -1090,23 +1050,6 @@ function extractGenericObjectDebugFields(genericObject) {
     header: genericObject?.header?.defaultValue?.value ?? null,
     hasLinks,
   };
-}
-
-function logDetailsTemplateOverridePayload({ label, classPayload }) {
-  const detailsItems =
-    classPayload?.classTemplateInfo?.detailsTemplateOverride?.detailsItemInfos;
-  const detailsFieldPaths = Array.isArray(detailsItems)
-    ? detailsItems.flatMap(
-        (info) => info?.item?.firstValue?.fields?.map((field) => field?.fieldPath) || []
-      )
-    : [];
-
-  console.log("GW_CLASS_DETAILS_TEMPLATE_OVERRIDE", {
-    label,
-    path: "classTemplateInfo.detailsTemplateOverride.detailsItemInfos",
-    detailsItemsCount: Array.isArray(detailsItems) ? detailsItems.length : 0,
-    detailsFieldPaths,
-  });
 }
 
 async function buildLoyaltyClassPayload({ classId, customer, template }) {
@@ -1341,10 +1284,6 @@ export async function ensureLoyaltyClassForMerchant({
           fields: extractClassDebugFields(loyaltyClass),
         });
       }
-      logDetailsTemplateOverridePayload({
-        label: "loyaltyClass",
-        classPayload: loyaltyClass,
-      });
 
       try {
         await walletRequest({
@@ -1616,10 +1555,6 @@ export async function ensureGenericClassForMerchant({
         console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
           classId,
           ...extractGenericClassDebugFields(genericClass),
-        });
-        logDetailsTemplateOverridePayload({
-          label: "genericClass",
-          classPayload: genericClass,
         });
         await walletRequest({
           method: "PATCH",
