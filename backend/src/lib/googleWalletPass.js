@@ -241,16 +241,6 @@ function upsertTermsTextModule(textModulesData, template) {
     return modules.filter((module) => module?.id !== "terms");
   }
 
-  if (modules.length > MAX_TEXT_MODULES) {
-    const trimmedModules = [...modules];
-    while (trimmedModules.length > MAX_TEXT_MODULES) {
-      const removeIndex = trimmedModules.findIndex((module) => module?.id !== "terms");
-      if (removeIndex === -1) break;
-      trimmedModules.splice(removeIndex, 1);
-    }
-    return trimmedModules.slice(0, MAX_TEXT_MODULES);
-  }
-
   return modules;
 }
 
@@ -654,7 +644,7 @@ function buildTermsDetailsTemplateOverride(existingOverride) {
   };
 }
 
-function buildGenericClassTemplateInfo({ template }) {
+function buildGenericClassTemplateInfo({ template, existingDetailsOverride = null }) {
   const layout = normalizeGenericLayout(
     template?.wallet?.google?.genericConfig?.layout,
     template
@@ -719,7 +709,7 @@ function buildGenericClassTemplateInfo({ template }) {
   }
 
   return {
-    ...buildTermsDetailsTemplateOverride(),
+    ...buildTermsDetailsTemplateOverride(existingDetailsOverride),
     cardTemplateOverride,
   };
 }
@@ -909,8 +899,11 @@ function buildGenericFrontFields({ card, template }) {
 }
 
 
-async function buildGenericClassPayload({ classId, template }) {
-  const classTemplateInfo = buildGenericClassTemplateInfo({ template });
+async function buildGenericClassPayload({ classId, template, existingDetailsOverride = null }) {
+  const classTemplateInfo = buildGenericClassTemplateInfo({
+    template,
+    existingDetailsOverride,
+  });
 
   const payload = {
     id: classId,
@@ -1121,6 +1114,40 @@ function logDetailsTemplateOverridePayload({ label, classPayload }) {
     path: "classTemplateInfo.detailsTemplateOverride.detailsItemInfos",
     detailsItemsCount: Array.isArray(detailsItems) ? detailsItems.length : 0,
     detailsFieldPaths,
+  });
+}
+
+function logGenericClassPatchDetails({ classId, classPayload }) {
+  if (!googleWalletConfig.isDevEnv) return;
+
+  const detailsItems =
+    classPayload?.classTemplateInfo?.detailsTemplateOverride?.detailsItemInfos;
+  const detailsFieldPaths = Array.isArray(detailsItems)
+    ? detailsItems.flatMap(
+        (info) => info?.item?.firstValue?.fields?.map((field) => field?.fieldPath) || []
+      )
+    : [];
+
+  console.log("GW_GENERIC_CLASS_PATCH_DETAILS", {
+    classId,
+    detailsItemsCount: Array.isArray(detailsItems) ? detailsItems.length : 0,
+    detailsFieldPaths,
+  });
+}
+
+function logGenericObjectPatchDetails({ objectId, objectPayload }) {
+  if (!googleWalletConfig.isDevEnv) return;
+
+  const textModules = Array.isArray(objectPayload?.textModulesData)
+    ? objectPayload.textModulesData
+    : [];
+  const textModuleIds = textModules.map((module) => module?.id).filter(Boolean);
+
+  console.log("GW_GENERIC_OBJECT_PATCH_DETAILS", {
+    objectId,
+    textModulesCount: textModules.length,
+    textModuleIds,
+    hasTerms: textModuleIds.includes("terms"),
   });
 }
 
@@ -1574,12 +1601,9 @@ export async function ensureGenericClassForMerchant({
     merchantId,
   });
 
-  const genericClass = await buildGenericClassPayload({
-    classId,
-    template: templateDoc,
-  });
-
   let existed = false;
+  let genericClass = null;
+  let savedClass = null;
 
   const handleWalletError = (err, payload) => {
     if (isGoogleWalletBadRequest(err) && googleWalletConfig.isDevEnv) {
@@ -1619,7 +1643,7 @@ export async function ensureGenericClassForMerchant({
   };
 
   try {
-    await walletRequest({
+    savedClass = await walletRequest({
       method: "GET",
       path: `/walletobjects/v1/genericClass/${classId}`,
     });
@@ -1628,6 +1652,13 @@ export async function ensureGenericClassForMerchant({
 
     if (forcePatch || patchPending) {
       try {
+        const existingDetailsOverride =
+          savedClass?.classTemplateInfo?.detailsTemplateOverride || null;
+        genericClass = await buildGenericClassPayload({
+          classId,
+          template: templateDoc,
+          existingDetailsOverride,
+        });
         console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
           classId,
           ...extractGenericClassDebugFields(genericClass),
@@ -1636,6 +1667,7 @@ export async function ensureGenericClassForMerchant({
           label: "genericClass",
           classPayload: genericClass,
         });
+        logGenericClassPatchDetails({ classId, classPayload: genericClass });
         await walletRequest({
           method: "PATCH",
           path: `/walletobjects/v1/genericClass/${classId}`,
@@ -1652,6 +1684,10 @@ export async function ensureGenericClassForMerchant({
     }
 
     try {
+      genericClass = await buildGenericClassPayload({
+        classId,
+        template: templateDoc,
+      });
       await walletRequest({
         method: "POST",
         path: "/walletobjects/v1/genericClass",
@@ -1756,6 +1792,10 @@ export async function ensureGenericObjectForCard({
         if (!barcodeEnabled && existingObject?.barcode) {
           genericObjectPayload.barcode = null;
         }
+        logGenericObjectPatchDetails({
+          objectId,
+          objectPayload: genericObjectPayload,
+        });
         await walletRequest({
           method: "PATCH",
           path: `/walletobjects/v1/genericObject/${objectId}`,
@@ -1946,6 +1986,10 @@ export async function syncGoogleGenericForMerchantTemplate({
           if (!barcodeEnabled && existingObject?.barcode) {
             genericObjectPayload.barcode = null;
           }
+          logGenericObjectPatchDetails({
+            objectId,
+            objectPayload: genericObjectPayload,
+          });
           await walletRequest({
             method: "PATCH",
             path: `/walletobjects/v1/genericObject/${objectId}`,
@@ -2135,6 +2179,11 @@ export async function updateGoogleWalletObjectForCard({
       passType,
     });
   }
+
+  logGenericObjectPatchDetails({
+    objectId,
+    objectPayload: patchPayload,
+  });
 
   await walletRequest({
     method: "PATCH",
