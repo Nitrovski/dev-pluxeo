@@ -244,6 +244,23 @@ function upsertTermsTextModule(textModulesData, template) {
   return modules;
 }
 
+function upsertTermsTextModuleGeneric(textModulesData, terms) {
+  const modules = Array.isArray(textModulesData)
+    ? textModulesData.filter((module) => module?.id !== "terms")
+    : [];
+  const normalizedTerms = String(terms ?? "").trim();
+
+  if (normalizedTerms) {
+    modules.push({
+      id: "terms",
+      header: "Podmínky",
+      body: normalizedTerms,
+    });
+  }
+
+  return modules;
+}
+
 function compactTextModulesData(textModulesData, { preserveFrontOrder = false } = {}) {
   if (!Array.isArray(textModulesData)) return [];
 
@@ -660,6 +677,8 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
   );
   const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
   const frontSlots = buildGenericFrontSlots({ template });
+  const frontCount = frontSlots.length;
+  const termsIndex = frontCount;
   const slotIndexById = new Map(
     frontSlots.map((slot, index) => [slot.slotId, index])
   );
@@ -719,10 +738,11 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
 
   return {
     ...buildTermsDetailsTemplateOverride(existingDetailsOverride, {
-      fieldPath: "object.customData.termsText",
+      fieldPath: `object.textModulesData[${termsIndex}].body`,
       removeFieldPaths: [
         "object.customData.termsText",
         "object.textModulesData['terms'].body",
+        `object.textModulesData[${termsIndex}].body`,
       ],
     }),
     cardTemplateOverride,
@@ -1021,23 +1041,14 @@ async function buildGenericObjectPayload({
   }
 
   const sanitizedTextModules = compactTextModulesData(textModulesData);
-  payload.textModulesData = sanitizedTextModules;
+  const terms = String(templateDoc?.termsText || "").trim();
+  payload.textModulesData = upsertTermsTextModuleGeneric(sanitizedTextModules, terms);
 
   const linksModuleData = buildGenericLinksModuleData({ template: templateDoc });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
 
   if (sanitizedLinksModule) {
     payload.linksModuleData = sanitizedLinksModule;
-  }
-
-  const terms = String(templateDoc?.termsText || "").trim();
-  if (terms) {
-    payload.customData = {
-      ...(payload.customData || {}),
-      termsText: terms,
-    };
-  } else if (payload.customData) {
-    delete payload.customData.termsText;
   }
 
   return payload;
@@ -1166,7 +1177,9 @@ function logGenericClassPatchDetails({
     classId,
     detailsItemsCount: Array.isArray(detailsItems) ? detailsItems.length : 0,
     detailsFieldPaths,
-    hasTermsCustom: detailsFieldPaths.includes("object.customData.termsText"),
+    hasTermsTextModule: detailsFieldPaths.some((path) =>
+      path?.startsWith("object.textModulesData[")
+    ),
     detailsItemsAtLeastExistingPlusOne:
       existingCount != null && Array.isArray(detailsItems)
         ? detailsItems.length >= existingCount + 1
@@ -1181,15 +1194,13 @@ function logGenericObjectPatchDetails({ objectId, objectPayload }) {
     ? objectPayload.textModulesData
     : [];
   const textModuleIds = textModules.map((module) => module?.id).filter(Boolean);
-  const customDataKeys = Object.keys(objectPayload?.customData || {});
 
   console.log("GW_GENERIC_OBJECT_PATCH_DETAILS", {
     objectId,
     textModulesCount: textModules.length,
     textModuleIds,
     hasTermsTextModule: textModuleIds.includes("terms"),
-    hasTermsCustom: Boolean(objectPayload?.customData?.termsText),
-    customDataKeys,
+    lastTextModuleId: textModuleIds.at(-1) ?? null,
   });
 }
 
@@ -1834,15 +1845,14 @@ export async function ensureGenericObjectForCard({
     customer,
   });
   if (googleWalletConfig.isDevEnv) {
-    console.log("GW_GENERIC_OBJECT_CUSTOMDATA", {
+    const textModules = Array.isArray(genericObjectPayload?.textModulesData)
+      ? genericObjectPayload.textModulesData
+      : [];
+    console.log("GW_GENERIC_OBJECT_TEXTMODULES", {
       objectId,
-      hasTermsCustom: Boolean(genericObjectPayload?.customData?.termsText),
-      termsLen: genericObjectPayload?.customData?.termsText
-        ? String(genericObjectPayload.customData.termsText).length
-        : 0,
-      customDataKeys: genericObjectPayload?.customData
-        ? Object.keys(genericObjectPayload.customData)
-        : [],
+      textModulesCount: textModules.length,
+      hasTermsTextModule: textModules.some((module) => module?.id === "terms"),
+      lastTextModuleId: textModules.at(-1)?.id ?? null,
     });
   }
 
@@ -1886,15 +1896,14 @@ export async function ensureGenericObjectForCard({
             method: "GET",
             path: `/walletobjects/v1/genericObject/${objectId}`,
           });
-          console.log("GW_GENERIC_OBJECT_SAVED_CUSTOMDATA", {
+          const savedTextModules = Array.isArray(savedObject?.textModulesData)
+            ? savedObject.textModulesData
+            : [];
+          console.log("GW_GENERIC_OBJECT_SAVED_TEXTMODULES", {
             objectId,
-            hasTermsCustom: Boolean(savedObject?.customData?.termsText),
-            termsLen: savedObject?.customData?.termsText
-              ? String(savedObject.customData.termsText).length
-              : 0,
-            customDataKeys: savedObject?.customData
-              ? Object.keys(savedObject.customData)
-              : [],
+            textModulesCount: savedTextModules.length,
+            hasTermsTextModule: savedTextModules.some((module) => module?.id === "terms"),
+            lastTextModuleId: savedTextModules.at(-1)?.id ?? null,
           });
         }
       } catch (patchErr) {
@@ -2047,20 +2056,22 @@ export async function syncGoogleGenericForMerchantTemplate({
           template: templateValue,
           customer,
         });
-        const templateTerms = String(templateValue?.termsText || "").trim();
-        const payloadTerms = String(genericObjectPayload?.customData?.termsText || "").trim();
+        const frontCount = Array.isArray(textModulesData) ? textModulesData.length : 0;
+        const termsIndex = frontCount;
+        const payloadModules = Array.isArray(genericObjectPayload?.textModulesData)
+          ? genericObjectPayload.textModulesData
+          : [];
         const shouldLogTermsDebug = termsDebugLogged < 2;
 
         if (shouldLogTermsDebug) {
           termsDebugLogged += 1;
-          console.log("GW_GENERIC_TERMS_DEBUG_PREPATCH", {
+          console.log("GW_GENERIC_TERMS_TEXTMODULES", {
             merchantId,
             objectId,
-            templateTermsLen: templateTerms.length,
-            payloadTermsLen: payloadTerms.length,
-            payloadCustomDataKeys: genericObjectPayload?.customData
-              ? Object.keys(genericObjectPayload.customData)
-              : [],
+            frontCount,
+            termsIndex,
+            total: payloadModules.length,
+            lastId: payloadModules.at(-1)?.id ?? null,
           });
         }
 
@@ -2108,13 +2119,6 @@ export async function syncGoogleGenericForMerchantTemplate({
           if (googleWalletConfig.isDevEnv) {
             console.log("GW_GENERIC_OBJECT_PATCH_DETAILS", {
               objectId,
-              hasTermsCustom: Boolean(genericObjectPayload?.customData?.termsText),
-              termsLen: genericObjectPayload?.customData?.termsText
-                ? String(genericObjectPayload.customData.termsText).length
-                : 0,
-              customDataKeys: genericObjectPayload?.customData
-                ? Object.keys(genericObjectPayload.customData)
-                : [],
               textModulesCount: Array.isArray(genericObjectPayload?.textModulesData)
                 ? genericObjectPayload.textModulesData.length
                 : 0,
@@ -2123,16 +2127,6 @@ export async function syncGoogleGenericForMerchantTemplate({
                     .map((module) => module?.id)
                     .filter(Boolean)
                     .slice(0, 10)
-                : [],
-            });
-            console.log("GW_GENERIC_OBJECT_CUSTOMDATA", {
-              objectId,
-              hasTermsCustom: Boolean(genericObjectPayload?.customData?.termsText),
-              termsLen: genericObjectPayload?.customData?.termsText
-                ? String(genericObjectPayload.customData.termsText).length
-                : 0,
-              customDataKeys: genericObjectPayload?.customData
-                ? Object.keys(genericObjectPayload.customData)
                 : [],
             });
           }
@@ -2147,14 +2141,14 @@ export async function syncGoogleGenericForMerchantTemplate({
               method: "GET",
               path: `/walletobjects/v1/genericObject/${objectId}`,
             });
-            const savedTerms = String(savedObject?.customData?.termsText || "").trim();
-            console.log("GW_GENERIC_TERMS_DEBUG_SAVED", {
+            const savedModules = Array.isArray(savedObject?.textModulesData)
+              ? savedObject.textModulesData
+              : [];
+            console.log("GW_GENERIC_TERMS_TEXTMODULES_SAVED", {
               merchantId,
               objectId,
-              savedTermsLen: savedTerms.length,
-              savedCustomDataKeys: savedObject?.customData
-                ? Object.keys(savedObject.customData)
-                : [],
+              total: savedModules.length,
+              lastId: savedModules.at(-1)?.id ?? null,
             });
           }
 
@@ -2163,13 +2157,14 @@ export async function syncGoogleGenericForMerchantTemplate({
               method: "GET",
               path: `/walletobjects/v1/genericObject/${objectId}`,
             });
-            console.log("GW_GENERIC_OBJECT_SAVED_CUSTOMDATA", {
+            const savedModules = Array.isArray(savedObject?.textModulesData)
+              ? savedObject.textModulesData
+              : [];
+            console.log("GW_GENERIC_OBJECT_SAVED_TEXTMODULES", {
               objectId,
-              hasTermsCustom: Boolean(savedObject?.customData?.termsText),
-              termsLen: savedObject?.customData?.termsText
-                ? String(savedObject.customData.termsText).length
-                : 0,
-              customDataKeys: savedObject?.customData ? Object.keys(savedObject.customData) : [],
+              textModulesCount: savedModules.length,
+              hasTermsTextModule: savedModules.some((module) => module?.id === "terms"),
+              lastTextModuleId: savedModules.at(-1)?.id ?? null,
             });
           }
         } else {
@@ -2183,14 +2178,14 @@ export async function syncGoogleGenericForMerchantTemplate({
               method: "GET",
               path: `/walletobjects/v1/genericObject/${objectId}`,
             });
-            const savedTerms = String(savedObject?.customData?.termsText || "").trim();
-            console.log("GW_GENERIC_TERMS_DEBUG_SAVED", {
+            const savedModules = Array.isArray(savedObject?.textModulesData)
+              ? savedObject.textModulesData
+              : [];
+            console.log("GW_GENERIC_TERMS_TEXTMODULES_SAVED", {
               merchantId,
               objectId,
-              savedTermsLen: savedTerms.length,
-              savedCustomDataKeys: savedObject?.customData
-                ? Object.keys(savedObject.customData)
-                : [],
+              total: savedModules.length,
+              lastId: savedModules.at(-1)?.id ?? null,
             });
           }
         }
@@ -2318,17 +2313,8 @@ export async function updateGoogleWalletObjectForCard({
 
   const patchPayload = {
     state: "ACTIVE",
-    textModulesData,
+    textModulesData: upsertTermsTextModuleGeneric(textModulesData, termsText),
   };
-
-  if (termsText) {
-    patchPayload.customData = {
-      ...(patchPayload.customData || {}),
-      termsText,
-    };
-  } else if (patchPayload.customData) {
-    delete patchPayload.customData.termsText;
-  }
 
   if (barcodeEnabled && normalizedBarcode) {
     patchPayload.barcode = {
