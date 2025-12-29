@@ -615,15 +615,24 @@ function buildTextModuleTemplateForIndex(index) {
   };
 }
 
-function buildTermsDetailsTemplateOverride(existingOverride) {
+function buildTermsDetailsTemplateOverride(
+  existingOverride,
+  {
+    fieldPath = "object.customData.termsText",
+    removeFieldPaths = null,
+  } = {}
+) {
   const existingItems = Array.isArray(existingOverride?.detailsItemInfos)
     ? existingOverride.detailsItemInfos
     : [];
+  const fieldPathsToRemove = Array.isArray(removeFieldPaths)
+    ? removeFieldPaths
+    : [fieldPath];
 
   const filteredItems = existingItems.filter(
     (info) =>
       !info?.item?.firstValue?.fields?.some(
-        (field) => field?.fieldPath === "object.textModulesData['terms'].body"
+        (field) => fieldPathsToRemove.includes(field?.fieldPath)
       )
   );
 
@@ -635,7 +644,7 @@ function buildTermsDetailsTemplateOverride(existingOverride) {
         {
           item: {
             firstValue: {
-              fields: [{ fieldPath: "object.textModulesData['terms'].body" }],
+              fields: [{ fieldPath }],
             },
           },
         },
@@ -709,7 +718,13 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
   }
 
   return {
-    ...buildTermsDetailsTemplateOverride(existingDetailsOverride),
+    ...buildTermsDetailsTemplateOverride(existingDetailsOverride, {
+      fieldPath: "object.customData.termsText",
+      removeFieldPaths: [
+        "object.customData.termsText",
+        "object.textModulesData['terms'].body",
+      ],
+    }),
     cardTemplateOverride,
   };
 }
@@ -778,7 +793,9 @@ function buildClassTemplateInfo({ templateTextModuleCount, promoPresent = false 
   }
 
   return {
-    ...buildTermsDetailsTemplateOverride(),
+    ...buildTermsDetailsTemplateOverride(null, {
+      fieldPath: "object.textModulesData['terms'].body",
+    }),
     cardTemplateOverride: {
       cardBarcodeSectionDetails: {
         renderedBarcodes: [
@@ -1003,8 +1020,17 @@ async function buildGenericObjectPayload({
   }
 
   const sanitizedTextModules = compactTextModulesData(textModulesData);
+  payload.textModulesData = sanitizedTextModules;
 
-  payload.textModulesData = upsertTermsTextModule(sanitizedTextModules, template);
+  const termsText = String(template?.termsText || "").trim();
+  if (termsText) {
+    payload.customData = {
+      ...(payload.customData || {}),
+      termsText,
+    };
+  } else if (payload.customData) {
+    delete payload.customData.termsText;
+  }
 
   const linksModuleData = buildGenericLinksModuleData({ template });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
@@ -1117,7 +1143,11 @@ function logDetailsTemplateOverridePayload({ label, classPayload }) {
   });
 }
 
-function logGenericClassPatchDetails({ classId, classPayload }) {
+function logGenericClassPatchDetails({
+  classId,
+  classPayload,
+  existingDetailsCount = null,
+}) {
   if (!googleWalletConfig.isDevEnv) return;
 
   const detailsItems =
@@ -1128,10 +1158,18 @@ function logGenericClassPatchDetails({ classId, classPayload }) {
       )
     : [];
 
+  const existingCount =
+    typeof existingDetailsCount === "number" ? existingDetailsCount : null;
+
   console.log("GW_GENERIC_CLASS_PATCH_DETAILS", {
     classId,
     detailsItemsCount: Array.isArray(detailsItems) ? detailsItems.length : 0,
     detailsFieldPaths,
+    hasTermsCustom: detailsFieldPaths.includes("object.customData.termsText"),
+    detailsItemsAtLeastExistingPlusOne:
+      existingCount != null && Array.isArray(detailsItems)
+        ? detailsItems.length >= existingCount + 1
+        : null,
   });
 }
 
@@ -1142,12 +1180,15 @@ function logGenericObjectPatchDetails({ objectId, objectPayload }) {
     ? objectPayload.textModulesData
     : [];
   const textModuleIds = textModules.map((module) => module?.id).filter(Boolean);
+  const customDataKeys = Object.keys(objectPayload?.customData || {});
 
   console.log("GW_GENERIC_OBJECT_PATCH_DETAILS", {
     objectId,
     textModulesCount: textModules.length,
     textModuleIds,
-    hasTerms: textModuleIds.includes("terms"),
+    hasTermsTextModule: textModuleIds.includes("terms"),
+    hasTermsCustom: Boolean(objectPayload?.customData?.termsText),
+    customDataKeys,
   });
 }
 
@@ -1654,6 +1695,11 @@ export async function ensureGenericClassForMerchant({
       try {
         const existingDetailsOverride =
           savedClass?.classTemplateInfo?.detailsTemplateOverride || null;
+        const existingDetailsCount = Array.isArray(
+          existingDetailsOverride?.detailsItemInfos
+        )
+          ? existingDetailsOverride.detailsItemInfos.length
+          : 0;
         genericClass = await buildGenericClassPayload({
           classId,
           template: templateDoc,
@@ -1667,7 +1713,11 @@ export async function ensureGenericClassForMerchant({
           label: "genericClass",
           classPayload: genericClass,
         });
-        logGenericClassPatchDetails({ classId, classPayload: genericClass });
+        logGenericClassPatchDetails({
+          classId,
+          classPayload: genericClass,
+          existingDetailsCount,
+        });
         await walletRequest({
           method: "PATCH",
           path: `/walletobjects/v1/genericClass/${classId}`,
@@ -2133,12 +2183,21 @@ export async function updateGoogleWalletObjectForCard({
     }),
     { preserveFrontOrder: true }
   );
-  const textModulesWithTerms = upsertTermsTextModule(textModulesData, template);
+  const termsText = String(template?.termsText || "").trim();
 
   const patchPayload = {
     state: "ACTIVE",
-    textModulesData: textModulesWithTerms,
+    textModulesData,
   };
+
+  if (termsText) {
+    patchPayload.customData = {
+      ...(patchPayload.customData || {}),
+      termsText,
+    };
+  } else if (patchPayload.customData) {
+    delete patchPayload.customData.termsText;
+  }
 
   if (barcodeEnabled && normalizedBarcode) {
     patchPayload.barcode = {
