@@ -1836,8 +1836,13 @@ export async function ensureGenericObjectForCard({
   if (googleWalletConfig.isDevEnv) {
     console.log("GW_GENERIC_OBJECT_CUSTOMDATA", {
       objectId,
-      hasCustomData: Boolean(genericObjectPayload.customData),
-      termsLen: (genericObjectPayload.customData?.termsText || "").length,
+      hasTermsCustom: Boolean(genericObjectPayload?.customData?.termsText),
+      termsLen: genericObjectPayload?.customData?.termsText
+        ? String(genericObjectPayload.customData.termsText).length
+        : 0,
+      customDataKeys: genericObjectPayload?.customData
+        ? Object.keys(genericObjectPayload.customData)
+        : [],
     });
   }
 
@@ -1881,9 +1886,15 @@ export async function ensureGenericObjectForCard({
             method: "GET",
             path: `/walletobjects/v1/genericObject/${objectId}`,
           });
-          console.log("GW_GENERIC_OBJECT_SAVED_STATE", {
+          console.log("GW_GENERIC_OBJECT_SAVED_CUSTOMDATA", {
             objectId,
-            ...extractGenericObjectDebugFields(savedObject || {}),
+            hasTermsCustom: Boolean(savedObject?.customData?.termsText),
+            termsLen: savedObject?.customData?.termsText
+              ? String(savedObject.customData.termsText).length
+              : 0,
+            customDataKeys: savedObject?.customData
+              ? Object.keys(savedObject.customData)
+              : [],
           });
         }
       } catch (patchErr) {
@@ -2002,6 +2013,7 @@ export async function syncGoogleGenericForMerchantTemplate({
       try {
         if (googleWalletConfig.isDevEnv) {
           console.log("GW_TEMPLATE_SYNC_TEMPLATE_SHAPE", {
+            templateId: String(templateValue?._id || ""),
             hasRootTermsText: Boolean(
               templateValue?.termsText && String(templateValue.termsText).trim()
             ),
@@ -2009,6 +2021,7 @@ export async function syncGoogleGenericForMerchantTemplate({
               ? String(templateValue.termsText).trim().length
               : 0,
             hasWalletGoogle: Boolean(templateValue?.wallet?.google),
+            templateKeysSample: templateValue ? Object.keys(templateValue).slice(0, 15) : [],
           });
         }
         const barcodeValue = barcodeEnabled
@@ -2117,10 +2130,12 @@ export async function syncGoogleGenericForMerchantTemplate({
               method: "GET",
               path: `/walletobjects/v1/genericObject/${objectId}`,
             });
-            console.log("GW_GENERIC_OBJECT_SAVED_STATE", {
+            console.log("GW_GENERIC_OBJECT_SAVED_CUSTOMDATA", {
               objectId,
               hasTermsCustom: Boolean(savedObject?.customData?.termsText),
-              termsLen: savedObject?.customData?.termsText?.length ?? 0,
+              termsLen: savedObject?.customData?.termsText
+                ? String(savedObject.customData.termsText).length
+                : 0,
               customDataKeys: savedObject?.customData ? Object.keys(savedObject.customData) : [],
             });
           }
