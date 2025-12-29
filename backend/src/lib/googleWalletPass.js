@@ -939,21 +939,22 @@ async function buildGenericObjectPayload({
   template,
   customer,
 }) {
+  const templateDoc = template;
   const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
-  const barcodeConfig = resolveGenericBarcodeConfig(template);
-  const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
+  const barcodeConfig = resolveGenericBarcodeConfig(templateDoc);
+  const barcodeEnabled = isGoogleGenericBarcodeEnabled(templateDoc);
 
-  const walletGoogle = template?.wallet?.google || {};
+  const walletGoogle = templateDoc?.wallet?.google || {};
   const issuerName =
     String(walletGoogle.issuerName || customer?.name || "").trim() ||
     DEFAULT_PROGRAM_NAME;
   const cardTitleValue = issuerName;
-  const subheadline = String(template?.subheadline || "").trim();
-  const headerText = resolveHeaderText({ template, customer });
+  const subheadline = String(templateDoc?.subheadline || "").trim();
+  const headerText = resolveHeaderText({ template: templateDoc, customer });
   const hexBackgroundColor =
     walletGoogle.backgroundColor?.trim() ||
     walletGoogle.hexBackgroundColor?.trim() ||
-    template?.primaryColor?.trim() ||
+    templateDoc?.primaryColor?.trim() ||
     DEFAULT_PRIMARY_COLOR;
 
   const { original: logoUrlOriginal, normalized: logoUrlCandidate } = normalizeImageUrl(
@@ -1022,7 +1023,7 @@ async function buildGenericObjectPayload({
   const sanitizedTextModules = compactTextModulesData(textModulesData);
   payload.textModulesData = sanitizedTextModules;
 
-  const terms = String(template?.termsText || "").trim();
+  const terms = String(templateDoc?.termsText || "").trim();
   if (terms) {
     payload.customData = {
       ...(payload.customData || {}),
@@ -1032,7 +1033,7 @@ async function buildGenericObjectPayload({
     delete payload.customData.termsText;
   }
 
-  const linksModuleData = buildGenericLinksModuleData({ template });
+  const linksModuleData = buildGenericLinksModuleData({ template: templateDoc });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
 
   if (sanitizedLinksModule) {
@@ -1999,6 +2000,17 @@ export async function syncGoogleGenericForMerchantTemplate({
       });
 
       try {
+        if (googleWalletConfig.isDevEnv) {
+          console.log("GW_TEMPLATE_SYNC_TEMPLATE_SHAPE", {
+            hasRootTermsText: Boolean(
+              templateValue?.termsText && String(templateValue.termsText).trim()
+            ),
+            rootTermsLen: templateValue?.termsText
+              ? String(templateValue.termsText).trim().length
+              : 0,
+            hasWalletGoogle: Boolean(templateValue?.wallet?.google),
+          });
+        }
         const barcodeValue = barcodeEnabled
           ? await resolveLoyaltyObjectBarcode({
               card,
@@ -2083,17 +2095,15 @@ export async function syncGoogleGenericForMerchantTemplate({
                     .slice(0, 10)
                 : [],
             });
-            const customDataKeys = genericObjectPayload?.customData
-              ? Object.keys(genericObjectPayload.customData)
-              : [];
             console.log("GW_GENERIC_OBJECT_CUSTOMDATA", {
               objectId,
-              hasCustomData: Boolean(genericObjectPayload?.customData),
-              customDataKeys,
               hasTermsCustom: Boolean(genericObjectPayload?.customData?.termsText),
               termsLen: genericObjectPayload?.customData?.termsText
                 ? String(genericObjectPayload.customData.termsText).length
                 : 0,
+              customDataKeys: genericObjectPayload?.customData
+                ? Object.keys(genericObjectPayload.customData)
+                : [],
             });
           }
           await walletRequest({
