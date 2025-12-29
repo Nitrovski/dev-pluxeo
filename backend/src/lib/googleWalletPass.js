@@ -1022,11 +1022,11 @@ async function buildGenericObjectPayload({
   const sanitizedTextModules = compactTextModulesData(textModulesData);
   payload.textModulesData = sanitizedTextModules;
 
-  const termsText = String(template?.termsText || "").trim();
-  if (termsText) {
+  const t = String(template?.termsText || "").trim();
+  if (t) {
     payload.customData = {
       ...(payload.customData || {}),
-      termsText,
+      termsText: t,
     };
   } else if (payload.customData) {
     delete payload.customData.termsText;
@@ -2040,6 +2040,27 @@ export async function syncGoogleGenericForMerchantTemplate({
             objectId,
             objectPayload: genericObjectPayload,
           });
+          if (googleWalletConfig.isDevEnv) {
+            console.log("GW_GENERIC_OBJECT_PATCH_DETAILS", {
+              objectId,
+              hasTermsCustom: Boolean(genericObjectPayload?.customData?.termsText),
+              termsLen: genericObjectPayload?.customData?.termsText
+                ? String(genericObjectPayload.customData.termsText).length
+                : 0,
+              customDataKeys: genericObjectPayload?.customData
+                ? Object.keys(genericObjectPayload.customData)
+                : [],
+              textModulesCount: Array.isArray(genericObjectPayload?.textModulesData)
+                ? genericObjectPayload.textModulesData.length
+                : 0,
+              textModuleIdsSample: Array.isArray(genericObjectPayload?.textModulesData)
+                ? genericObjectPayload.textModulesData
+                    .map((module) => module?.id)
+                    .filter(Boolean)
+                    .slice(0, 10)
+                : [],
+            });
+          }
           await walletRequest({
             method: "PATCH",
             path: `/walletobjects/v1/genericObject/${objectId}`,
@@ -2053,7 +2074,9 @@ export async function syncGoogleGenericForMerchantTemplate({
             });
             console.log("GW_GENERIC_OBJECT_SAVED_STATE", {
               objectId,
-              ...extractGenericObjectDebugFields(savedObject || {}),
+              hasTermsCustom: Boolean(savedObject?.customData?.termsText),
+              termsLen: savedObject?.customData?.termsText?.length ?? 0,
+              customDataKeys: savedObject?.customData ? Object.keys(savedObject.customData) : [],
             });
           }
         } else {
