@@ -1022,12 +1022,15 @@ async function buildGenericObjectPayload({
   const sanitizedTextModules = compactTextModulesData(textModulesData);
   payload.textModulesData = sanitizedTextModules;
 
-  const terms =
-    typeof template?.termsText === "string" ? template.termsText : "";
-  payload.customData = {
-    ...(payload.customData || {}),
-    termsText: terms,
-  };
+  const terms = String(template?.termsText || "").trim();
+  if (terms) {
+    payload.customData = {
+      ...(payload.customData || {}),
+      termsText: terms,
+    };
+  } else if (payload.customData) {
+    delete payload.customData.termsText;
+  }
 
   const linksModuleData = buildGenericLinksModuleData({ template });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
@@ -2079,6 +2082,18 @@ export async function syncGoogleGenericForMerchantTemplate({
                     .filter(Boolean)
                     .slice(0, 10)
                 : [],
+            });
+            const customDataKeys = genericObjectPayload?.customData
+              ? Object.keys(genericObjectPayload.customData)
+              : [];
+            console.log("GW_GENERIC_OBJECT_CUSTOMDATA", {
+              objectId,
+              hasCustomData: Boolean(genericObjectPayload?.customData),
+              customDataKeys,
+              hasTermsCustom: Boolean(genericObjectPayload?.customData?.termsText),
+              termsLen: genericObjectPayload?.customData?.termsText
+                ? String(genericObjectPayload.customData.termsText).length
+                : 0,
             });
           }
           await walletRequest({
