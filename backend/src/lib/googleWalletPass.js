@@ -804,23 +804,6 @@ function buildClassTemplateInfo({ templateTextModuleCount, promoPresent = false 
   const dynamicTextRowIndices = [dynamicIndexStart, dynamicIndexStart + 1];
   const promoIndex = promoPresent ? 0 : null;
 
-  rows.push({
-    twoItems: {
-      startItem: {
-        firstValue: { fields: [{ fieldPath: "object.loyaltyPoints.label" }] },
-        secondValue: { fields: [{ fieldPath: "object.loyaltyPoints.balance" }] },
-      },
-      endItem: {
-        firstValue: {
-          fields: [{ fieldPath: "object.secondaryLoyaltyPoints.label" }],
-        },
-        secondValue: {
-          fields: [{ fieldPath: "object.secondaryLoyaltyPoints.balance" }],
-        },
-      },
-    },
-  });
-
   if (promoPresent) {
     const promoRowEndIndex =
       templateTextModuleCount > 1 && promoIndex === 0
@@ -829,16 +812,16 @@ function buildClassTemplateInfo({ templateTextModuleCount, promoPresent = false 
 
     rows.push({
       twoItems: {
-        startItem: buildTextModuleTemplate(promoIndex),
-        endItem: buildTextModuleTemplate(promoRowEndIndex),
+        startItem: buildTextModuleTemplateForIndex(promoIndex),
+        endItem: buildTextModuleTemplateForIndex(promoRowEndIndex),
       },
     });
   }
 
   rows.push({
     twoItems: {
-      startItem: buildTextModuleTemplate(dynamicTextRowIndices[0]),
-      endItem: buildTextModuleTemplate(dynamicTextRowIndices[1]),
+      startItem: buildTextModuleTemplateForIndex(dynamicTextRowIndices[0]),
+      endItem: buildTextModuleTemplateForIndex(dynamicTextRowIndices[1]),
     },
   });
 
@@ -855,8 +838,8 @@ function buildClassTemplateInfo({ templateTextModuleCount, promoPresent = false 
 
     rows.push({
       twoItems: {
-        startItem: buildTextModuleTemplate(templateIndices[0]),
-        endItem: buildTextModuleTemplate(templateIndices[1]),
+        startItem: buildTextModuleTemplateForIndex(templateIndices[0]),
+        endItem: buildTextModuleTemplateForIndex(templateIndices[1]),
       },
     });
   }
