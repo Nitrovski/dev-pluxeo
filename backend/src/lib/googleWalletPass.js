@@ -209,7 +209,7 @@ function sanitizeLinks(links) {
 
   return links
     .map((link) => ({
-      uri: (link?.uri || "").trim(),
+      uri: (link?.uri || link?.url || "").trim(),
       description: (link?.description || "").trim(),
       label: (link?.label || "").trim(),
     }))
@@ -223,6 +223,13 @@ function trimTextModuleValue(value) {
 
 function normalizeTermsText(template) {
   const raw = template?.termsText;
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed ? trimmed : null;
+}
+
+function normalizeDetailsText(template) {
+  const raw = template?.detailsText;
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   return trimmed ? trimmed : null;
@@ -252,17 +259,22 @@ function upsertTermsTextModule(textModulesData, template) {
   return modules;
 }
 
-function upsertTermsTextModuleGeneric(textModulesData, terms) {
-  const modules = Array.isArray(textModulesData)
-    ? textModulesData.filter((module) => module?.id !== "terms")
-    : [];
-  const normalizedTerms = String(terms ?? "").trim();
+function appendGenericDetailsModules(textModulesData, template) {
+  const modules = Array.isArray(textModulesData) ? [...textModulesData] : [];
+  const detailsText = normalizeDetailsText(template);
+  const termsText = normalizeTermsText(template);
 
-  if (normalizedTerms) {
+  if (detailsText) {
+    modules.push({
+      id: "details",
+      body: detailsText,
+    });
+  }
+
+  if (termsText) {
     modules.push({
       id: "terms",
-      header: "Podmínky",
-      body: normalizedTerms,
+      body: termsText,
     });
   }
 
@@ -648,10 +660,11 @@ function buildTextModuleTemplateForIndex(index) {
   };
 }
 
-function buildTermsDetailsTemplateOverride(
+function buildDetailsTemplateOverride(
   existingOverride,
   {
-    fieldPath = "object.customData.termsText",
+    detailsFieldPath = null,
+    termsFieldPath = null,
     removeFieldPaths = null,
   } = {}
 ) {
@@ -660,7 +673,7 @@ function buildTermsDetailsTemplateOverride(
     : [];
   const fieldPathsToRemove = Array.isArray(removeFieldPaths)
     ? removeFieldPaths
-    : [fieldPath];
+    : [detailsFieldPath, termsFieldPath].filter(Boolean);
 
   const filteredItems = existingItems.filter(
     (info) =>
@@ -669,19 +682,32 @@ function buildTermsDetailsTemplateOverride(
       )
   );
 
+  const detailsItemInfos = [...filteredItems];
+
+  if (detailsFieldPath) {
+    detailsItemInfos.push({
+      item: {
+        firstValue: {
+          fields: [{ fieldPath: detailsFieldPath }],
+        },
+      },
+    });
+  }
+
+  if (termsFieldPath) {
+    detailsItemInfos.push({
+      item: {
+        firstValue: {
+          fields: [{ fieldPath: termsFieldPath }],
+        },
+      },
+    });
+  }
+
   return {
     detailsTemplateOverride: {
       ...(existingOverride || {}),
-      detailsItemInfos: [
-        ...filteredItems,
-        {
-          item: {
-            firstValue: {
-              fields: [{ fieldPath }],
-            },
-          },
-        },
-      ],
+      detailsItemInfos,
     },
   };
 }
@@ -693,7 +719,11 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
   );
   const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
   const frontSlots = buildGenericFrontSlots({ template });
-  const termsIndex = GENERIC_FRONT_SLOT_IDS.length;
+  const baseIndex = GENERIC_FRONT_SLOT_IDS.length;
+  const detailsText = normalizeDetailsText(template);
+  const termsText = normalizeTermsText(template);
+  const detailsIndex = detailsText ? baseIndex : null;
+  const termsIndex = termsText ? baseIndex + (detailsText ? 1 : 0) : null;
   const slotIndexById = new Map(
     frontSlots.map((slot, index) => [slot.slotId, index])
   );
@@ -752,12 +782,16 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
   }
 
   return {
-    ...buildTermsDetailsTemplateOverride(existingDetailsOverride, {
-      fieldPath: `object.textModulesData[${termsIndex}].body`,
+    ...buildDetailsTemplateOverride(existingDetailsOverride, {
+      detailsFieldPath:
+        detailsIndex == null ? null : `object.textModulesData[${detailsIndex}].body`,
+      termsFieldPath:
+        termsIndex == null ? null : `object.textModulesData[${termsIndex}].body`,
       removeFieldPaths: [
         "object.customData.termsText",
         "object.textModulesData['terms'].body",
-        `object.textModulesData[${termsIndex}].body`,
+        `object.textModulesData[${baseIndex}].body`,
+        `object.textModulesData[${baseIndex + 1}].body`,
       ],
     }),
     cardTemplateOverride,
@@ -828,8 +862,8 @@ function buildClassTemplateInfo({ templateTextModuleCount, promoPresent = false 
   }
 
   return {
-    ...buildTermsDetailsTemplateOverride(null, {
-      fieldPath: "object.textModulesData['terms'].body",
+    ...buildDetailsTemplateOverride(null, {
+      termsFieldPath: "object.textModulesData['terms'].body",
     }),
     cardTemplateOverride: {
       cardBarcodeSectionDetails: {
@@ -890,21 +924,29 @@ function buildObjectLinksModuleData(template) {
 }
 
 function buildGenericLinksModuleData({ template }) {
+  const walletGoogle = template?.wallet?.google || {};
+  const uris = [];
   const normalizedWebsite = normalizeWebsiteUrl(template?.websiteUrl);
-  if (!normalizedWebsite) return null;
 
-  const slots = buildGenericLayoutSlots({ template });
-  const websiteSlot = slots.find((slot) => slot.fieldId === "websiteUrl");
-  if (!websiteSlot) return null;
-
-  return {
-    uris: [
-      {
+  if (normalizedWebsite) {
+    const slots = buildGenericLayoutSlots({ template });
+    const websiteSlot = slots.find((slot) => slot.fieldId === "websiteUrl");
+    if (websiteSlot) {
+      uris.push({
         uri: normalizedWebsite,
         description: websiteSlot.label || resolveGenericFieldLabel("websiteUrl"),
-      },
-    ],
-  };
+      });
+    }
+  }
+
+  const linksModuleUris = sanitizeLinks(walletGoogle.links).map((link, idx) => ({
+    uri: link.uri,
+    description: link.label || link.description || `Otevřít odkaz ${idx + 1}`,
+  }));
+
+  uris.push(...linksModuleUris);
+
+  return uris.length > 0 ? { uris } : null;
 }
 
 function buildGenericFrontFields({ card, template }) {
@@ -1071,8 +1113,7 @@ async function buildGenericObjectPayload({
   }
 
   const normalizedFrontModules = normalizeGenericFrontTextModules(textModulesData);
-  const terms = String(templateDoc?.termsText || "").trim();
-  payload.textModulesData = upsertTermsTextModuleGeneric(normalizedFrontModules, terms);
+  payload.textModulesData = appendGenericDetailsModules(normalizedFrontModules, templateDoc);
 
   const linksModuleData = buildGenericLinksModuleData({ template: templateDoc });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
@@ -2359,12 +2400,19 @@ export async function updateGoogleWalletObjectForCard({
       template,
     })
   );
-  const termsText = String(template?.termsText || "").trim();
+  const linksModuleData = buildGenericLinksModuleData({ template });
 
   const patchPayload = {
     state: "ACTIVE",
-    textModulesData: upsertTermsTextModuleGeneric(textModulesData, termsText),
+    textModulesData: appendGenericDetailsModules(textModulesData, template),
   };
+
+  const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
+  if (sanitizedLinksModule) {
+    patchPayload.linksModuleData = sanitizedLinksModule;
+  } else if (existingObject?.linksModuleData) {
+    patchPayload.linksModuleData = null;
+  }
 
   if (barcodeEnabled && normalizedBarcode) {
     patchPayload.barcode = {
