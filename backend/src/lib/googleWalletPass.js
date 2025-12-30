@@ -1,4 +1,7 @@
-import { googleWalletConfig } from "../config/googleWallet.config.js";
+import {
+  getGoogleWalletMode,
+  googleWalletConfig,
+} from "../config/googleWallet.config.js";
 import { Card } from "../models/card.model.js";
 import { Customer } from "../models/customer.model.js";
 import { CardTemplate } from "../models/cardTemplate.model.js";
@@ -51,6 +54,8 @@ const GENERIC_FIELD_META = {
   openingHours: { defaultShowLabel: true },
   websiteUrl: { defaultShowLabel: true },
 };
+let hasLoggedMode = false;
+let hasLoggedLoyaltyIgnored = false;
 
 function isObj(value) {
   return value && typeof value === "object" && !Array.isArray(value);
@@ -64,6 +69,12 @@ function normBarcodeValue(v) {
 
 function isValidHttpsUrl(url) {
   return typeof url === "string" && url.trim().toLowerCase().startsWith("https://");
+}
+
+export function resolveGoogleWalletClassPrefix(passType) {
+  return passType === "generic"
+    ? `${googleWalletConfig.classPrefix}${GENERIC_CLASS_PREFIX_SUFFIX}`
+    : googleWalletConfig.classPrefix;
 }
 
 function sanitizeImageUrl(url) {
@@ -1711,7 +1722,7 @@ export async function ensureGenericClassForMerchant({
   const patchPending =
     pendingPatchAt &&
     (!lastPatchedAt || new Date(pendingPatchAt) > new Date(lastPatchedAt));
-  const classPrefix = `${googleWalletConfig.classPrefix}${GENERIC_CLASS_PREFIX_SUFFIX}`;
+  const classPrefix = resolveGoogleWalletClassPrefix("generic");
 
   const classId = makeClassId({
     issuerId: googleWalletConfig.issuerId,
@@ -2324,17 +2335,41 @@ export async function syncGoogleGenericForMerchantTemplate({
   return { classId, processed, totalCards, errors };
 }
 
-function resolveDesiredPassType(cardDoc, template) {
+export function resolveDesiredPassType(cardDoc, template) {
+  const mode = getGoogleWalletMode();
   const templatePassType = template?.wallet?.google?.passType;
   const genericEnabled =
     templatePassType === "generic" &&
     template?.wallet?.google?.genericConfig?.enabled === true;
 
-  if (template) {
-    return genericEnabled ? "generic" : "loyalty";
+  let passType;
+
+  if (mode === "generic_only") {
+    passType = "generic";
+    if (
+      !hasLoggedLoyaltyIgnored &&
+      (templatePassType === "loyalty" || cardDoc?.googleWallet?.passType === "loyalty")
+    ) {
+      console.warn("LOYALTY_CONFIG_IGNORED_GENERIC_ONLY", {
+        templatePassType,
+        cardPassType: cardDoc?.googleWallet?.passType ?? null,
+      });
+      hasLoggedLoyaltyIgnored = true;
+    }
+  } else if (mode === "loyalty_only") {
+    passType = "loyalty";
+  } else if (template) {
+    passType = genericEnabled ? "generic" : "loyalty";
+  } else {
+    passType = cardDoc?.googleWallet?.passType === "generic" ? "generic" : "loyalty";
   }
 
-  return cardDoc?.googleWallet?.passType === "generic" ? "generic" : "loyalty";
+  if (!hasLoggedMode) {
+    console.log("GW_MODE", { mode, effectivePassType: passType });
+    hasLoggedMode = true;
+  }
+
+  return passType;
 }
 
 export async function updateGoogleWalletObjectForCard({
@@ -2644,6 +2679,14 @@ export function buildAddToGoogleWalletUrl({
       kid: privateKeyId,
     },
   });
+
+  if (passType === "generic") {
+    if (logger?.info) {
+      logger.info({ classId, objectId, passType }, "GW_SAVE_JWT_TYPE=generic");
+    } else {
+      console.log("GW_SAVE_JWT_TYPE=generic", { classId, objectId, passType });
+    }
+  }
 
   return `https://pay.google.com/gp/v/save/${token}`;
 }
