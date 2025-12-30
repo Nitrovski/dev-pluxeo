@@ -5,7 +5,7 @@ import { CardTemplate } from "../models/cardTemplate.model.js";
 import { CardEvent } from "../models/cardEvent.model.js";
 import { buildCardEventPayload } from "../lib/eventSchemas.js";
 import { generateScanCode, ensureCardHasScanCode } from "../lib/scanCode.js";
-import { ensureGooglePassForCard } from "../lib/googleWalletPass.js";
+import { ensureGooglePassForCard, resolveDesiredPassType } from "../lib/googleWalletPass.js";
 
 const normalizeEnrollmentCode = (value) => String(value || "").trim().toLowerCase();
 const normalizeClientId = (value) => String(value || "").trim().toLowerCase();
@@ -136,12 +136,7 @@ export default async function enrollRoutes(fastify) {
         const programType =
           template?.programType || template?.cardType || "stamps"; // backward compatible
 
-        const walletGoogle = template?.wallet?.google || {};
-        const resolvedPassType =
-          walletGoogle.passType === "generic" &&
-          walletGoogle.genericConfig?.enabled === true
-            ? "generic"
-            : "loyalty";
+        const resolvedPassType = resolveDesiredPassType(null, template);
 
         const stampsPerReward =
           template?.rules?.freeStampsToReward != null

@@ -7,6 +7,8 @@ import {
   ensureGenericClassForMerchant,
   ensureLoyaltyClassForMerchant,
   ensureGooglePassForCard,
+  resolveDesiredPassType,
+  resolveGoogleWalletClassPrefix,
 } from "../lib/googleWalletPass.js";
 import {
   buildGoogleWalletErrorResponse,
@@ -71,9 +73,13 @@ export async function merchantWalletGoogleRoutes(fastify) {
         return reply.code(404).send({ error: "Card not found" });
       }
 
+      const template = await CardTemplate.findOne({ merchantId }).lean();
+      const passType = resolveDesiredPassType(card, template);
+      const classPrefix = resolveGoogleWalletClassPrefix(passType);
+
       const classId = makeClassId({
         issuerId: googleWalletConfig.issuerId,
-        classPrefix: googleWalletConfig.classPrefix,
+        classPrefix,
         merchantId,
       });
 
@@ -84,11 +90,11 @@ export async function merchantWalletGoogleRoutes(fastify) {
       const [classData, objectData] = await Promise.all([
         walletRequest({
           method: "GET",
-          path: `/walletobjects/v1/loyaltyClass/${classId}`,
+          path: `/walletobjects/v1/${passType}Class/${classId}`,
         }),
         walletRequest({
           method: "GET",
-          path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+          path: `/walletobjects/v1/${passType}Object/${objectId}`,
         }),
       ]);
 
@@ -98,9 +104,11 @@ export async function merchantWalletGoogleRoutes(fastify) {
           issuerName: classData?.issuerName ?? null,
           programName: classData?.programName ?? null,
           classTemplateInfo: classData?.classTemplateInfo ?? null,
+          passType,
         },
         object: {
           id: objectId,
+          passType,
           barcode: objectData?.barcode ?? null,
           textModulesData: objectData?.textModulesData ?? [],
           linksModuleData: objectData?.linksModuleData ?? null,
@@ -128,15 +136,18 @@ export async function merchantWalletGoogleRoutes(fastify) {
       }
 
       const merchantId = userId;
+      const template = await CardTemplate.findOne({ merchantId }).lean();
+      const passType = resolveDesiredPassType(null, template);
+      const classPrefix = resolveGoogleWalletClassPrefix(passType);
       const classId = makeClassId({
         issuerId: googleWalletConfig.issuerId,
-        classPrefix: googleWalletConfig.classPrefix,
+        classPrefix,
         merchantId,
       });
 
       const data = await walletRequest({
         method: "GET",
-        path: `/walletobjects/v1/loyaltyClass/${classId}`,
+        path: `/walletobjects/v1/${passType}Class/${classId}`,
       });
 
       return reply.send({
@@ -147,6 +158,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
           heroImageUrl: data?.heroImage?.sourceUri?.uri ?? null,
           issuerName: data?.issuerName ?? null,
           programName: data?.programName ?? null,
+          passType,
         },
       });
     } catch (err) {
@@ -181,9 +193,12 @@ export async function merchantWalletGoogleRoutes(fastify) {
         return reply.code(404).send({ error: "Card not found" });
       }
 
+      const template = await CardTemplate.findOne({ merchantId }).lean();
+      const passType = resolveDesiredPassType(card, template);
+      const classPrefix = resolveGoogleWalletClassPrefix(passType);
       const classId = makeClassId({
         issuerId: googleWalletConfig.issuerId,
-        classPrefix: googleWalletConfig.classPrefix,
+        classPrefix,
         merchantId,
       });
 
@@ -194,13 +209,14 @@ export async function merchantWalletGoogleRoutes(fastify) {
 
       const data = await walletRequest({
         method: "GET",
-        path: `/walletobjects/v1/loyaltyObject/${objectId}`,
+        path: `/walletobjects/v1/${passType}Object/${objectId}`,
       });
 
       return reply.send({
         object: {
           id: objectId,
           classId,
+          passType,
           barcode: data?.barcode ?? null,
           textModulesData: data?.textModulesData ?? [],
           linksModuleData: data?.linksModuleData ?? null,
@@ -287,10 +303,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
 
       const template = await CardTemplate.findOne({ merchantId }).lean();
 
-      const isGenericEnabled =
-        template?.wallet?.google?.passType === "generic" &&
-        template?.wallet?.google?.genericConfig?.enabled === true;
-      const resolvedPassType = isGenericEnabled ? "generic" : "loyalty";
+      const resolvedPassType = resolveDesiredPassType(null, template);
 
       const ensureFn =
         resolvedPassType === "generic"

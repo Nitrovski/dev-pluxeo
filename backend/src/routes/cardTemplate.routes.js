@@ -5,6 +5,7 @@ import { getAuth } from "@clerk/fastify";
 import {
   ensureLoyaltyClassForMerchant,
   ensureLoyaltyObjectForCard,
+  resolveDesiredPassType,
   syncGoogleGenericForMerchantTemplate,
 } from "../lib/googleWalletPass.js";
 
@@ -204,16 +205,6 @@ function normalizeWallet(inWallet) {
   const apple = isObj(appleIn) ? appleIn : {};
 
   return { google, apple };
-}
-
-function resolveEffectivePassTypeFromTemplate(template) {
-  const wallet = normalizeWallet(template?.wallet);
-  const google = wallet.google;
-
-  const genericEnabled =
-    google.passType === "generic" && google.genericConfig?.enabled === true;
-
-  return genericEnabled ? "generic" : "loyalty";
 }
 
 function toApi(template, merchantId) {
@@ -481,7 +472,7 @@ async function cardTemplateRoutes(fastify, options) {
       template.wallet = normalizeWallet(template.wallet);
       const templateValue = template.toObject();
 
-      const effectivePassType = resolveEffectivePassTypeFromTemplate(template);
+      const effectivePassType = resolveDesiredPassType(null, template);
 
       const walletSyncResult = {
         classSynced: false,

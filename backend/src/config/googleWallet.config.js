@@ -19,10 +19,22 @@ if (!defaultLogoUrl && !isDevEnv) {
 }
 
 const classPrefix = process.env.GOOGLE_WALLET_CLASS_PREFIX || 'pluxeo';
+const WALLET_MODES = new Set(['generic_only', 'dual', 'loyalty_only']);
+
+export function getGoogleWalletMode() {
+  const mode = process.env.GOOGLE_WALLET_MODE?.trim().toLowerCase() || 'generic_only';
+
+  if (!WALLET_MODES.has(mode)) {
+    return 'generic_only';
+  }
+
+  return mode;
+}
 
 export const googleWalletConfig = {
   issuerId,
   classPrefix,
   defaultLogoUrl,
   isDevEnv,
+  mode: getGoogleWalletMode(),
 };
