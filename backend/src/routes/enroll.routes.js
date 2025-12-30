@@ -54,6 +54,7 @@ export default async function enrollRoutes(fastify) {
       },
     },
     async (request, reply) => {
+      let logContextBase = {};
       try {
         const body = request.body || {};
         const enrollmentCode = normalizeEnrollmentCode(body.code);
@@ -66,14 +67,20 @@ export default async function enrollRoutes(fastify) {
         const ip = request.ip;
         const ua = request.headers["user-agent"] || "";
 
-        const logContextBase = {
-          requestId,
-          ip,
-          ua,
-          enrollmentCode,
-          clientId: normalizedClientId || null,
-          effectiveClientId,
-        };
+        logContextBase = (() => {
+          try {
+            return {
+              requestId,
+              ip,
+              ua,
+              enrollmentCode,
+              clientId: normalizedClientId || null,
+              effectiveClientId,
+            };
+          } catch {
+            return {};
+          }
+        })();
 
         if (!enrollmentCode) {
           const payload = { ok: false, error: "code is required" };
