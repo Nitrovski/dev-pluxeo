@@ -2196,6 +2196,19 @@ export async function syncGoogleGenericForMerchantTemplate({
           if (!barcodeEnabled && existingObject?.barcode) {
             genericObjectPayload.barcode = null;
           }
+          const linksModuleData = buildGenericLinksModuleData({ template: templateValue });
+          const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
+          console.log("GW_LINKS_DEBUG_GENERIC_PATCH", {
+            objectId,
+            classId,
+            websiteUrl: templateValue?.websiteUrl,
+            normalizedWebsite: normalizeWebsiteUrl(templateValue?.websiteUrl),
+            builtLinksModuleData: linksModuleData,
+            sanitizedLinksModuleData: sanitizedLinksModule,
+            willPatchLinks: Boolean(sanitizedLinksModule),
+            patchKeys: Object.keys(genericObjectPayload || {}),
+            patchLinksModuleData: genericObjectPayload?.linksModuleData ?? undefined,
+          });
           logGenericObjectPatchDetails({
             objectId,
             objectPayload: genericObjectPayload,
@@ -2224,11 +2237,18 @@ export async function syncGoogleGenericForMerchantTemplate({
             body: genericObjectPayload,
           });
 
+          const savedObject = await walletRequest({
+            method: "GET",
+            path: `/walletobjects/v1/genericObject/${objectId}`,
+          });
+          console.log("GW_LINKS_SAVED_GENERIC_OBJECT", {
+            objectId,
+            hasLinks: Boolean(savedObject?.linksModuleData?.uris?.length),
+            linksCount: savedObject?.linksModuleData?.uris?.length || 0,
+            uris: savedObject?.linksModuleData?.uris || null,
+          });
+
           if (shouldLogTermsDebug) {
-            const savedObject = await walletRequest({
-              method: "GET",
-              path: `/walletobjects/v1/genericObject/${objectId}`,
-            });
             const savedModules = Array.isArray(savedObject?.textModulesData)
               ? savedObject.textModulesData
               : [];
@@ -2241,10 +2261,6 @@ export async function syncGoogleGenericForMerchantTemplate({
           }
 
           if (googleWalletConfig.isDevEnv) {
-            const savedObject = await walletRequest({
-              method: "GET",
-              path: `/walletobjects/v1/genericObject/${objectId}`,
-            });
             const savedModules = Array.isArray(savedObject?.textModulesData)
               ? savedObject.textModulesData
               : [];
