@@ -1400,6 +1400,7 @@ function buildLoyaltyObjectPayload({
   classId,
   card,
   barcodeValue,
+  template,
   textModulesData,
   linksModuleData,
 }) {
@@ -1627,6 +1628,7 @@ export async function ensureLoyaltyObjectForCard({
     classId,
     card: cardDoc,
     barcodeValue,
+    template,
     textModulesData: textModules,
     linksModuleData,
   });
