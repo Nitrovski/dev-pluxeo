@@ -910,7 +910,7 @@ function buildObjectLinksModuleData(template) {
 
   const normalizedWebsite = normalizeWebsiteUrl(template?.websiteUrl);
   if (normalizedWebsite) {
-    uris.push({ uri: normalizedWebsite, description: "Web" });
+    uris.push({ uri: normalizedWebsite, description: "Website" });
   }
 
   const linksModuleUris = sanitizeLinks(walletGoogle.links).map((link, idx) => ({
