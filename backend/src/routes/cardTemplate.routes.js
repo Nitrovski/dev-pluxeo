@@ -231,6 +231,7 @@ function toApi(template, merchantId) {
     promoText: template?.promoText || "",
     openingHours: template?.openingHours || "",
     websiteUrl: template?.websiteUrl || "",
+    detailsText: template?.detailsText ?? null,
     termsText: template?.termsText ?? null,
 
     // pravidla programu
@@ -272,6 +273,7 @@ async function cardTemplateRoutes(fastify, options) {
           promoText: "",
           openingHours: "",
           websiteUrl: "",
+          detailsText: null,
           termsText: null,
           rules: {
             freeStampsToReward: 10,
@@ -364,6 +366,7 @@ async function cardTemplateRoutes(fastify, options) {
         promoText: payload.promoText,
         openingHours: payload.openingHours,
         websiteUrl: payload.websiteUrl,
+        detailsText: payload.detailsText,
         termsText: payload.termsText,
         primaryColor: payload.primaryColor,
         secondaryColor: payload.secondaryColor,
@@ -380,6 +383,7 @@ async function cardTemplateRoutes(fastify, options) {
 
       // vyčisti undefined/null hodnoty (null bereme jako "neposláno", ať se ti to nevymaže v DB)
       const $set = { merchantId };
+      const hasDetailsText = Object.prototype.hasOwnProperty.call(payload, "detailsText");
       const hasTermsText = Object.prototype.hasOwnProperty.call(payload, "termsText");
 
       for (const [key, value] of Object.entries(update)) {
@@ -439,6 +443,8 @@ async function cardTemplateRoutes(fastify, options) {
           $set.logoUrl = pickString(value, "");
         } else if (key === "termsText") {
           // handled separately to allow explicit nulls
+        } else if (key === "detailsText") {
+          // handled separately to allow explicit nulls
         } else if (typeof value === "string") {
           // POZOR: prázdný string je validní (uživatel může chtít vymazat hodnotu)
           $set[key] = value;
@@ -453,6 +459,15 @@ async function cardTemplateRoutes(fastify, options) {
           $set.termsText = trimmed ? trimmed : null;
         } else if (payload.termsText === null) {
           $set.termsText = null;
+        }
+      }
+
+      if (hasDetailsText) {
+        if (typeof payload.detailsText === "string") {
+          const trimmed = payload.detailsText.trim();
+          $set.detailsText = trimmed ? trimmed : null;
+        } else if (payload.detailsText === null) {
+          $set.detailsText = null;
         }
       }
 
