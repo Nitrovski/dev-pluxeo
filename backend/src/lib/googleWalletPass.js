@@ -929,14 +929,10 @@ function buildGenericLinksModuleData({ template }) {
   const normalizedWebsite = normalizeWebsiteUrl(template?.websiteUrl);
 
   if (normalizedWebsite) {
-    const slots = buildGenericLayoutSlots({ template });
-    const websiteSlot = slots.find((slot) => slot.fieldId === "websiteUrl");
-    if (websiteSlot) {
-      uris.push({
-        uri: normalizedWebsite,
-        description: websiteSlot.label || resolveGenericFieldLabel("websiteUrl"),
-      });
-    }
+    uris.push({
+      uri: normalizedWebsite,
+      description: "Website",
+    });
   }
 
   const linksModuleUris = sanitizeLinks(walletGoogle.links).map((link, idx) => ({
