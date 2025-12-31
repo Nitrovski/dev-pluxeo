@@ -133,8 +133,10 @@ export default async function enrollRoutes(fastify) {
         // ? nacti aktuální template (zdroj pravdy pro program)
         const template = await CardTemplate.findOne({ merchantId: customer.merchantId }).lean();
 
-        const programType =
-          template?.programType || template?.cardType || "stamps"; // backward compatible
+        const incomingCardType = template?.cardType || template?.programType || "custom";
+        const resolvedCardType = ["custom", "stamps", "coupon", "info"].includes(incomingCardType)
+          ? incomingCardType
+          : "custom"; // backward compatible
 
         const resolvedPassType = resolveDesiredPassType(null, template);
 
@@ -198,14 +200,14 @@ export default async function enrollRoutes(fastify) {
             notes: "",
 
             // ? nový programový typ na karte (tohle ti dnes chybí)
-            type: programType,
+            type: resolvedCardType,
 
             googleWallet: {
               passType: resolvedPassType,
             },
 
             // ? stamps pravidlo pouze pokud je stamps program
-            stampsPerReward: programType === "stamps" ? stampsPerReward : undefined,
+            stampsPerReward: resolvedCardType === "stamps" ? stampsPerReward : null,
           };
 
           const card = await Card.create(cardDoc);
@@ -240,7 +242,7 @@ export default async function enrollRoutes(fastify) {
           });
 
           request.log.info(
-            { ...logContext, cardId: card._id, payload, type: programType },
+            { ...logContext, cardId: card._id, payload, type: resolvedCardType },
             "Enroll success"
           );
 

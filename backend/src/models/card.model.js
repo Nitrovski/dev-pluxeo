@@ -175,7 +175,7 @@ const CardSchema = new Schema(
     // typ programu (zatím)
     type: {
       type: String,
-      default: "stamps",
+      default: "custom",
       index: true,
     },
   },

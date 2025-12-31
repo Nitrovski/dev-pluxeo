@@ -118,11 +118,12 @@ function normalizeHeaderText(value) {
   return trimmed ? trimmed : null;
 }
 
+const VALID_CARD_TYPES = new Set(["custom", "stamps", "coupon", "info"]);
+
 function resolveCardType(template) {
-  if (template?.cardType === "coupon" || template?.cardType === "info") return template.cardType;
-  if (template?.programType === "coupon" || template?.programType === "info")
-    return template.programType;
-  return "stamps";
+  if (VALID_CARD_TYPES.has(template?.cardType)) return template.cardType;
+  if (VALID_CARD_TYPES.has(template?.programType)) return template.programType;
+  return "custom";
 }
 
 function resolveFreeStampsToReward(template) {
@@ -272,8 +273,8 @@ async function cardTemplateRoutes(fastify, options) {
       // pokud šablona neexistuje -> vrať default
       if (!template) {
         const defaultTpl = {
-          programType: "stamps",
-          cardType: "stamps",
+          programType: "custom",
+          cardType: "custom",
           programName: "",
           headline: "",
           subheadline: "",
@@ -342,6 +343,7 @@ async function cardTemplateRoutes(fastify, options) {
 
       const merchantId = userId;
       const payload = request.body || {};
+      const existingTemplate = await CardTemplate.findOne({ merchantId }).lean();
 
       console.log("TEMPLATE_PUT_INCOMING_LAYOUT", {
         merchantId,
@@ -367,11 +369,10 @@ async function cardTemplateRoutes(fastify, options) {
 
       // whitelist podle FE tvaru
       const incomingCardType =
-        payload.cardType || payload.programType || "stamps";
-      const resolvedCardType =
-        incomingCardType === "coupon" || incomingCardType === "info"
-          ? incomingCardType
-          : "stamps";
+        payload.cardType || payload.programType || resolveCardType(existingTemplate);
+      const resolvedCardType = VALID_CARD_TYPES.has(incomingCardType)
+        ? incomingCardType
+        : "custom";
 
       const update = {
         programType: payload.programType, // "stamps" | "coupon"
@@ -410,17 +411,25 @@ async function cardTemplateRoutes(fastify, options) {
           const rules = {};
 
           if (value.freeStampsToReward !== undefined && value.freeStampsToReward !== null) {
-            if (resolvedCardType === "stamps") {
-              const normalizedValue = Number(value.freeStampsToReward);
-              if (!Number.isFinite(normalizedValue) || normalizedValue < 1) {
+            const normalizedValue = Number(value.freeStampsToReward);
+            if (!Number.isFinite(normalizedValue)) {
+              if (resolvedCardType === "stamps") {
                 return reply
                   .code(400)
                   .send({ error: "freeStampsToReward must be >= 1" });
               }
-
+            } else {
               const normalizedFreeStamps = Math.floor(normalizedValue);
-              rules.freeStampsToReward = normalizedFreeStamps;
-              $set.freeStampsToReward = normalizedFreeStamps;
+              if (normalizedFreeStamps < 1) {
+                if (resolvedCardType === "stamps") {
+                  return reply
+                    .code(400)
+                    .send({ error: "freeStampsToReward must be >= 1" });
+                }
+              } else {
+                rules.freeStampsToReward = normalizedFreeStamps;
+                $set.freeStampsToReward = normalizedFreeStamps;
+              }
             }
           }
 
@@ -464,8 +473,9 @@ async function cardTemplateRoutes(fastify, options) {
           // save apple (keep stable object)
           $set["wallet.apple"] = wallet.apple || {};
         } else if (key === "programType") {
-          $set.programType = value === "coupon" || value === "info" ? value : "stamps";
-          $set.cardType = $set.programType;
+          const normalizedProgramType = VALID_CARD_TYPES.has(value) ? value : "custom";
+          $set.programType = normalizedProgramType;
+          $set.cardType = normalizedProgramType;
         } else if (key === "cardType") {
           $set.cardType = resolvedCardType;
           $set.programType = resolvedCardType;
