@@ -32,15 +32,15 @@ const CardTemplateSchema = new Schema(
     // ? jedin prepnac programu
     programType: {
       type: String,
-      enum: ["stamps", "coupon", "info"],
-      default: "stamps",
+      enum: ["custom", "stamps", "coupon", "info"],
+      default: "custom",
       index: true,
     },
     // novější alias pro programType (FE očekává cardType)
     cardType: {
       type: String,
-      enum: ["stamps", "coupon", "info"],
-      default: "stamps",
+      enum: ["custom", "stamps", "coupon", "info"],
+      default: "custom",
     },
 
     // nový top-level práh (fallback na rules.freeStampsToReward)

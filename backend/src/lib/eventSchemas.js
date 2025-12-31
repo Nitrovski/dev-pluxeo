@@ -9,7 +9,7 @@ export const CARD_EVENT_TYPES = [
   "CARD_UPDATED",
 ];
 
-const CARD_TYPES = ["stamps", "coupon", "loyalty", "business"];
+const CARD_TYPES = ["custom", "stamps", "coupon", "info", "loyalty", "business"];
 const ACTOR_TYPES = ["merchant", "staff", "system"];
 const SCAN_STATUSES = ["success", "failure"];
 

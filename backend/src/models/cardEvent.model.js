@@ -20,8 +20,8 @@ const CardEventSchema = new Schema(
     // Card context  pro budouc typy
     cardType: {
       type: String,
-      enum: ["stamps", "coupon", "loyalty", "business"],
-      default: "stamps",
+      enum: ["custom", "stamps", "coupon", "info", "loyalty", "business"],
+      default: "custom",
       index: true,
     },
     templateId: { type: String, default: null, index: true },
