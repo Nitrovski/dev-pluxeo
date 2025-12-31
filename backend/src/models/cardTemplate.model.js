@@ -36,6 +36,23 @@ const CardTemplateSchema = new Schema(
       default: "stamps",
       index: true,
     },
+    // novější alias pro programType (FE očekává cardType)
+    cardType: {
+      type: String,
+      enum: ["stamps", "coupon", "info"],
+      default: "stamps",
+    },
+
+    // nový top-level práh (fallback na rules.freeStampsToReward)
+    freeStampsToReward: {
+      type: Number,
+      default: 10,
+      min: 1,
+      validate: {
+        validator: Number.isInteger,
+        message: "freeStampsToReward must be an integer",
+      },
+    },
 
     /**
      * Texty / obsah karty (globln)

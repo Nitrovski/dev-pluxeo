@@ -139,7 +139,9 @@ export default async function enrollRoutes(fastify) {
         const resolvedPassType = resolveDesiredPassType(null, template);
 
         const stampsPerReward =
-          template?.rules?.freeStampsToReward != null
+          template?.freeStampsToReward != null
+            ? Number(template.freeStampsToReward)
+            : template?.rules?.freeStampsToReward != null
             ? Number(template.rules.freeStampsToReward)
             : 10;
 

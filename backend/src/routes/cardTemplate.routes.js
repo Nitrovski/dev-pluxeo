@@ -118,6 +118,19 @@ function normalizeHeaderText(value) {
   return trimmed ? trimmed : null;
 }
 
+function resolveCardType(template) {
+  if (template?.cardType === "coupon" || template?.cardType === "info") return template.cardType;
+  if (template?.programType === "coupon" || template?.programType === "info")
+    return template.programType;
+  return "stamps";
+}
+
+function resolveFreeStampsToReward(template) {
+  const candidate =
+    template?.freeStampsToReward ?? template?.rules?.freeStampsToReward ?? 10;
+  return Number.isFinite(Number(candidate)) ? Math.floor(Number(candidate)) : 10;
+}
+
 function createConcurrencyQueue(limit, items, handler) {
   let nextIndex = 0;
 
@@ -210,11 +223,14 @@ function normalizeWallet(inWallet) {
 function toApi(template, merchantId) {
   // vracíme tvar, který FE očekává (CardTemplatePage)
   const wallet = normalizeWallet(template?.wallet);
+  const cardType = resolveCardType(template);
+  const freeStampsToReward = resolveFreeStampsToReward(template);
 
   return {
     merchantId,
 
-    programType: template?.programType || "stamps",
+    programType: template?.programType || cardType,
+    cardType,
     programName: template?.programName || "",
     headline: template?.headline || "",
     subheadline: template?.subheadline || "",
@@ -226,7 +242,7 @@ function toApi(template, merchantId) {
     termsText: template?.termsText ?? null,
 
     // pravidla programu
-    freeStampsToReward: template?.rules?.freeStampsToReward ?? 10,
+    freeStampsToReward,
     couponText: template?.rules?.couponText ?? "",
 
     primaryColor: template?.primaryColor || "#FF9900",
@@ -257,6 +273,7 @@ async function cardTemplateRoutes(fastify, options) {
       if (!template) {
         const defaultTpl = {
           programType: "stamps",
+          cardType: "stamps",
           programName: "",
           headline: "",
           subheadline: "",
@@ -266,6 +283,7 @@ async function cardTemplateRoutes(fastify, options) {
           websiteUrl: "",
           detailsText: null,
           termsText: null,
+          freeStampsToReward: 10,
           rules: {
             freeStampsToReward: 10,
             couponText: "",
@@ -348,8 +366,16 @@ async function cardTemplateRoutes(fastify, options) {
       const syncWalletObjectsConcurrency = 3;
 
       // whitelist podle FE tvaru
+      const incomingCardType =
+        payload.cardType || payload.programType || "stamps";
+      const resolvedCardType =
+        incomingCardType === "coupon" || incomingCardType === "info"
+          ? incomingCardType
+          : "stamps";
+
       const update = {
         programType: payload.programType, // "stamps" | "coupon"
+        cardType: payload.cardType,
         programName: payload.programName,
         headline: payload.headline,
         subheadline: payload.subheadline,
@@ -384,7 +410,18 @@ async function cardTemplateRoutes(fastify, options) {
           const rules = {};
 
           if (value.freeStampsToReward !== undefined && value.freeStampsToReward !== null) {
-            rules.freeStampsToReward = pickNumber(value.freeStampsToReward, 10);
+            if (resolvedCardType === "stamps") {
+              const normalizedValue = Number(value.freeStampsToReward);
+              if (!Number.isFinite(normalizedValue) || normalizedValue < 1) {
+                return reply
+                  .code(400)
+                  .send({ error: "freeStampsToReward must be >= 1" });
+              }
+
+              const normalizedFreeStamps = Math.floor(normalizedValue);
+              rules.freeStampsToReward = normalizedFreeStamps;
+              $set.freeStampsToReward = normalizedFreeStamps;
+            }
           }
 
           if (value.couponText !== undefined && value.couponText !== null) {
@@ -427,7 +464,11 @@ async function cardTemplateRoutes(fastify, options) {
           // save apple (keep stable object)
           $set["wallet.apple"] = wallet.apple || {};
         } else if (key === "programType") {
-          $set.programType = value === "coupon" ? "coupon" : "stamps";
+          $set.programType = value === "coupon" || value === "info" ? value : "stamps";
+          $set.cardType = $set.programType;
+        } else if (key === "cardType") {
+          $set.cardType = resolvedCardType;
+          $set.programType = resolvedCardType;
         } else if (key === "promoText") {
           $set.promoText = pickString(value, "");
         } else if (key === "logoUrl") {
@@ -462,6 +503,7 @@ async function cardTemplateRoutes(fastify, options) {
         }
       }
 
+      // TODO: pokud zavedeme "global switch programu", synchronizovat card.type/stampsPerReward.
       const template = await CardTemplate.findOneAndUpdate(
         { merchantId },
         { $set },
