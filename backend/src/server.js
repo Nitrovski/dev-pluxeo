@@ -13,6 +13,7 @@ import { merchantScanRoutes } from "./routes/merchant.scan.routes.js";
 import { publicCardRoutes } from "./routes/public.card.routes.js";
 import { merchantStampRoutes } from "./routes/merchant.stamp.routes.js";
 import { publicGoogleWalletRoutes } from "./routes/public.wallet.google.routes.js";
+import multipart from "@fastify/multipart";
 
 import { Card } from "./models/card.model.js";
 
@@ -34,6 +35,7 @@ import cardTemplateRoutes from "./routes/cardTemplate.routes.js";
 import { cardTemplateStarterRoutes } from "./routes/cardTemplate.starters.routes.js";
 import { googleWalletConfig } from "./config/googleWallet.config.js";
 import { merchantWalletGoogleRoutes } from "./routes/merchant.wallet.google.routes.js";
+import { merchantAssetsRoutes } from "./routes/merchant.assets.routes.js";
 
 const fastify = Fastify({
   logger: true,
@@ -80,6 +82,9 @@ const start = async () => {
     await fastify.register(rateLimit, {
       global: false, // jen na vybrane routy
     });
+    await fastify.register(multipart, {
+      limits: { fileSize: 3 * 1024 * 1024 },
+    });
     // Clerk plugin musi byt registrovan PRED routami
     await fastify.register(clerkPlugin, {
       secretKey: clerkSecretKey,
@@ -105,6 +110,7 @@ const start = async () => {
     fastify.register(publicGoogleWalletRoutes);
     fastify.register(merchantStampRoutes);
     fastify.register(merchantWalletGoogleRoutes);
+    fastify.register(merchantAssetsRoutes);
 
 
     // Start serveru
