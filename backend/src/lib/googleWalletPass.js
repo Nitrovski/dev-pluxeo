@@ -241,7 +241,7 @@ function normalizeTermsText(template) {
 
 function resolveDetailsOverrideState(template) {
   const detailsOverrideEnabled = template?.wallet?.google?.detailsOverrideEnabled;
-  const shouldUseOverride = detailsOverrideEnabled !== false;
+  const shouldUseOverride = detailsOverrideEnabled === true;
 
   return { detailsOverrideEnabled, shouldUseOverride };
 }
