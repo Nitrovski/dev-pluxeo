@@ -42,5 +42,9 @@ export const uploadMerchantAsset = async ({
 
   await r2Client.send(command);
 
-  return `${process.env.R2_PUBLIC_BASE_URL}/${process.env.R2_BUCKET_NAME}/${key}`;
+  return buildPublicUrl({
+    baseUrl: process.env.R2_PUBLIC_BASE_URL,
+    bucketName: process.env.R2_BUCKET_NAME,
+    key,
+  });
 };
