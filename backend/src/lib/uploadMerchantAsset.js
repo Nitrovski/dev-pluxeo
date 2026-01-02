@@ -15,6 +15,20 @@ const kindToExtension = {
   },
 };
 
+function buildPublicUrl({ baseUrl, bucketName, key }) {
+  const base = String(baseUrl || "").replace(/\/+$/, "");
+  const k = String(key || "").replace(/^\/+/, "");
+  if (!base) throw new Error("Missing R2_PUBLIC_BASE_URL");
+
+  // r2.dev → bucket je v hostname, nepatří do path
+  if (base.includes(".r2.dev")) return `${base}/${k}`;
+
+  // fallback pro S3-style endpointy
+  const b = String(bucketName || "").replace(/^\/+|\/+$/g, "");
+  if (!b) throw new Error("Missing R2_BUCKET_NAME");
+  return `${base}/${b}/${k}`;
+}
+
 export const uploadMerchantAsset = async ({
   merchantId,
   kind,
@@ -30,7 +44,10 @@ export const uploadMerchantAsset = async ({
   }
 
   const ext = kindToExtension[kind][contentType];
-  const key = `merchants/${merchantId}/${kind}.${ext}`;
+
+  // Produkční řešení: verzované názvy → žádné cache problémy
+  const version = Date.now(); // alternativně UUID/hash, ale timestamp stačí
+  const key = `merchants/${merchantId}/${kind}-${version}.${ext}`;
 
   const command = new PutObjectCommand({
     Bucket: process.env.R2_BUCKET_NAME,
