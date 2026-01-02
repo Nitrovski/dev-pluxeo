@@ -239,6 +239,18 @@ function normalizeTermsText(template) {
   return trimmed ? trimmed : null;
 }
 
+function resolveDetailsOverrideState(template) {
+  const detailsOverrideEnabled = template?.wallet?.google?.detailsOverrideEnabled;
+  const shouldUseOverride = detailsOverrideEnabled !== false;
+
+  return { detailsOverrideEnabled, shouldUseOverride };
+}
+
+function isInvalidResourceError(err) {
+  const errorMessage = err?.responseBody?.error?.message || "";
+  return isGoogleWalletBadRequest(err) && errorMessage.includes("invalidResource");
+}
+
 function normalizeDetailsText(template) {
   const raw = template?.detailsText;
   if (typeof raw !== "string") return null;
@@ -341,8 +353,7 @@ function normalizeLinksModuleData(linksModuleData) {
 
 function logInvalidResourcePayload({ err, label, payload }) {
   const errorMessage = err?.responseBody?.error?.message || "";
-  const isInvalidResource =
-    isGoogleWalletBadRequest(err) && errorMessage.includes("invalidResource");
+  const isInvalidResource = isInvalidResourceError(err);
 
   if (!googleWalletConfig.isDevEnv || !isInvalidResource) return;
 
@@ -724,6 +735,7 @@ function buildDetailsTemplateOverride(
 }
 
 function buildGenericClassTemplateInfo({ template, existingDetailsOverride = null }) {
+  const { shouldUseOverride } = resolveDetailsOverrideState(template);
   const layout = normalizeGenericLayout(
     template?.wallet?.google?.genericConfig?.layout,
     template
@@ -789,6 +801,13 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
           showCodeText: true,
         },
       ],
+    };
+  }
+
+  if (!shouldUseOverride) {
+    return {
+      cardTemplateOverride,
+      detailsTemplateOverride: null,
     };
   }
 
@@ -1788,6 +1807,8 @@ export async function ensureGenericClassForMerchant({
         )
           ? existingDetailsOverride.detailsItemInfos.length
           : 0;
+        const { detailsOverrideEnabled, shouldUseOverride } =
+          resolveDetailsOverrideState(templateDoc);
         genericClass = await buildGenericClassPayload({
           classId,
           template: templateDoc,
@@ -1796,6 +1817,10 @@ export async function ensureGenericClassForMerchant({
         console.log("GW_GENERIC_CLASS_PATCH_PAYLOAD", {
           classId,
           ...extractGenericClassDebugFields(genericClass),
+          detailsOverrideEnabled,
+          shouldUseOverride,
+          willSendDetailsOverrideNull:
+            genericClass?.classTemplateInfo?.detailsTemplateOverride === null,
         });
         if (googleWalletConfig.isDevEnv) {
           const detailsFieldPaths = Array.isArray(
@@ -1822,12 +1847,44 @@ export async function ensureGenericClassForMerchant({
           classPayload: genericClass,
           existingDetailsCount,
         });
-        await walletRequest({
-          method: "PATCH",
-          path: `/walletobjects/v1/genericClass/${classId}`,
-          body: genericClass,
-        });
-        await logGenericClassState();
+        try {
+          await walletRequest({
+            method: "PATCH",
+            path: `/walletobjects/v1/genericClass/${classId}`,
+            body: genericClass,
+          });
+          await logGenericClassState();
+        } catch (patchErr) {
+          const shouldRetryWithoutNullOverride =
+            !shouldUseOverride &&
+            genericClass?.classTemplateInfo?.detailsTemplateOverride === null &&
+            isInvalidResourceError(patchErr);
+
+          if (!shouldRetryWithoutNullOverride) {
+            throw patchErr;
+          }
+
+          console.warn("GW_GENERIC_CLASS_NULL_OVERRIDE_REJECTED", { classId });
+
+          const fallbackPayload = {
+            ...genericClass,
+            classTemplateInfo: {
+              ...(genericClass?.classTemplateInfo || {}),
+              detailsTemplateOverride: { detailsItemInfos: [] },
+            },
+          };
+
+          try {
+            await walletRequest({
+              method: "PATCH",
+              path: `/walletobjects/v1/genericClass/${classId}`,
+              body: fallbackPayload,
+            });
+            await logGenericClassState();
+          } catch (fallbackErr) {
+            handleWalletError(fallbackErr, fallbackPayload);
+          }
+        }
       } catch (err) {
         handleWalletError(err, genericClass);
       }
@@ -1838,15 +1895,47 @@ export async function ensureGenericClassForMerchant({
     }
 
     try {
+      const { shouldUseOverride } = resolveDetailsOverrideState(templateDoc);
       genericClass = await buildGenericClassPayload({
         classId,
         template: templateDoc,
       });
-      await walletRequest({
-        method: "POST",
-        path: "/walletobjects/v1/genericClass",
-        body: genericClass,
-      });
+      try {
+        await walletRequest({
+          method: "POST",
+          path: "/walletobjects/v1/genericClass",
+          body: genericClass,
+        });
+      } catch (createErr) {
+        const shouldRetryWithoutNullOverride =
+          !shouldUseOverride &&
+          genericClass?.classTemplateInfo?.detailsTemplateOverride === null &&
+          isInvalidResourceError(createErr);
+
+        if (!shouldRetryWithoutNullOverride) {
+          throw createErr;
+        }
+
+        console.warn("GW_GENERIC_CLASS_NULL_OVERRIDE_REJECTED", { classId });
+
+        const fallbackPayload = {
+          ...genericClass,
+          classTemplateInfo: {
+            ...(genericClass?.classTemplateInfo || {}),
+            detailsTemplateOverride: { detailsItemInfos: [] },
+          },
+        };
+
+        try {
+          await walletRequest({
+            method: "POST",
+            path: "/walletobjects/v1/genericClass",
+            body: fallbackPayload,
+          });
+        } catch (fallbackErr) {
+          handleWalletError(fallbackErr, fallbackPayload);
+        }
+      }
     } catch (createErr) {
       handleWalletError(createErr, genericClass);
     }
