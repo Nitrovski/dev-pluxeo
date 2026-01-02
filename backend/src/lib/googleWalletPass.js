@@ -745,10 +745,8 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
   const barcodeEnabled = isGoogleGenericBarcodeEnabled(template);
   const frontSlots = buildGenericFrontSlots({ template });
   const baseIndex = GENERIC_FRONT_SLOT_IDS.length;
-  const detailsText = normalizeDetailsText(template);
-  const termsText = normalizeTermsText(template);
-  const detailsIndex = detailsText ? baseIndex : null;
-  const termsIndex = termsText ? baseIndex + (detailsText ? 1 : 0) : null;
+  const detailsIndex = baseIndex;
+  const termsIndex = baseIndex + 1;
   const slotIndexById = new Map(
     frontSlots.map((slot, index) => [slot.slotId, index])
   );
@@ -1012,6 +1010,69 @@ function normalizeGenericFrontTextModules(textModulesData) {
   });
 }
 
+function buildPlaceholderTextModule(index) {
+  return { id: `tm_${index}`, header: "", body: "" };
+}
+
+function buildGenericObjectTextModulesData({
+  textModulesData,
+  template,
+  existingObject = null,
+}) {
+  const normalizedFrontModules = normalizeGenericFrontTextModules(textModulesData);
+  const modules = Array.from({ length: 9 }, (_value, index) =>
+    buildPlaceholderTextModule(index)
+  );
+
+  normalizedFrontModules.forEach((module, idx) => {
+    if (idx < GENERIC_FRONT_SLOT_IDS.length) {
+      modules[idx] = module;
+    }
+  });
+
+  const detailsText = normalizeDetailsText(template);
+  const termsText = normalizeTermsText(template);
+
+  if (detailsText) {
+    modules[6] = { id: "details", body: detailsText };
+  }
+
+  if (termsText) {
+    modules[7] = { id: "terms", body: termsText };
+  }
+
+  const promoText = sanitizeGenericPromoText(template?.promoText);
+  if (promoText) {
+    modules[8] = {
+      id: "promo",
+      header: GENERIC_FIELD_LABELS.promoText,
+      body: promoText,
+    };
+  } else {
+    const existingModule = Array.isArray(existingObject?.textModulesData)
+      ? existingObject.textModulesData[8]
+      : null;
+    const existingBody = trimTextModuleValue(existingModule?.body);
+
+    if (existingBody) {
+      modules[8] = {
+        ...existingModule,
+        id: existingModule?.id || "tm_8",
+        header: typeof existingModule?.header === "string" ? existingModule.header : "",
+        body: existingModule?.body ?? "",
+      };
+    }
+  }
+
+  return modules;
+}
+
+function buildGenericObjectUpdateMask(payload) {
+  return Object.keys(payload || {})
+    .filter((key) => key && key !== "id" && key !== "classId")
+    .join(",");
+}
+
 
 async function buildGenericClassPayload({ classId, template, existingDetailsOverride = null }) {
   const classTemplateInfo = buildGenericClassTemplateInfo({
@@ -1035,6 +1096,7 @@ async function buildGenericObjectPayload({
   textModulesData,
   template,
   customer,
+  existingObject = null,
 }) {
   const templateDoc = template;
   const normalizedBarcodeValue = normBarcodeValue(barcodeValue).slice(0, MAX_BARCODE_LENGTH);
@@ -1117,8 +1179,11 @@ async function buildGenericObjectPayload({
     };
   }
 
-  const normalizedFrontModules = normalizeGenericFrontTextModules(textModulesData);
-  payload.textModulesData = appendGenericDetailsModules(normalizedFrontModules, templateDoc);
+  payload.textModulesData = buildGenericObjectTextModulesData({
+    textModulesData,
+    template: templateDoc,
+    existingObject,
+  });
 
   const linksModuleData = buildGenericLinksModuleData({ template: templateDoc });
   const sanitizedLinksModule = normalizeLinksModuleData(linksModuleData);
@@ -1927,26 +1992,6 @@ export async function ensureGenericObjectForCard({
   if (!customer) {
     throw new Error("Customer not found for this merchant");
   }
-  const genericObjectPayload = await buildGenericObjectPayload({
-    objectId,
-    classId,
-    barcodeValue,
-    textModulesData,
-    template: templateDoc,
-    customer,
-  });
-  if (googleWalletConfig.isDevEnv) {
-    const textModules = Array.isArray(genericObjectPayload?.textModulesData)
-      ? genericObjectPayload.textModulesData
-      : [];
-    console.log("GW_GENERIC_OBJECT_TEXTMODULES", {
-      objectId,
-      textModulesCount: textModules.length,
-      hasTermsTextModule: textModules.some((module) => module?.id === "terms"),
-      lastTextModuleId: textModules.at(-1)?.id ?? null,
-    });
-  }
-
   let existed = false;
   let existingObject = null;
   const handleWalletError = (err, payload) => {
@@ -1966,7 +2011,34 @@ export async function ensureGenericObjectForCard({
     });
 
     existed = true;
+  } catch (err) {
+    if (err?.status !== 404) {
+      handleWalletError(err, { objectId });
+    }
+  }
 
+  const genericObjectPayload = await buildGenericObjectPayload({
+    objectId,
+    classId,
+    barcodeValue,
+    textModulesData,
+    template: templateDoc,
+    customer,
+    existingObject,
+  });
+  if (googleWalletConfig.isDevEnv) {
+    const textModules = Array.isArray(genericObjectPayload?.textModulesData)
+      ? genericObjectPayload.textModulesData
+      : [];
+    console.log("GW_GENERIC_OBJECT_TEXTMODULES", {
+      objectId,
+      textModulesCount: textModules.length,
+      hasTermsTextModule: textModules.some((module) => module?.id === "terms"),
+      lastTextModuleId: textModules.at(-1)?.id ?? null,
+    });
+  }
+
+  if (existed) {
     if (forcePatch) {
       try {
         if (!barcodeEnabled && existingObject?.barcode) {
@@ -1980,9 +2052,12 @@ export async function ensureGenericObjectForCard({
           objectId,
           payload: genericObjectPayload,
         });
+        const updateMask = buildGenericObjectUpdateMask(genericObjectPayload);
         await walletRequest({
           method: "PATCH",
-          path: `/walletobjects/v1/genericObject/${objectId}`,
+          path: `/walletobjects/v1/genericObject/${objectId}?updateMask=${encodeURIComponent(
+            updateMask
+          )}`,
           body: genericObjectPayload,
         });
 
@@ -2005,11 +2080,7 @@ export async function ensureGenericObjectForCard({
         handleWalletError(patchErr, genericObjectPayload);
       }
     }
-  } catch (err) {
-    if (err?.status !== 404) {
-      handleWalletError(err, genericObjectPayload);
-    }
-
+  } else {
     try {
       await walletRequest({
         method: "POST",
@@ -2143,6 +2214,21 @@ export async function syncGoogleGenericForMerchantTemplate({
           ? textModulesData.filter((module) => module?.allowHeaderless === true).length
           : 0;
 
+        let existed = false;
+        let existingObject = null;
+
+        try {
+          existingObject = await walletRequest({
+            method: "GET",
+            path: `/walletobjects/v1/genericObject/${objectId}`,
+          });
+          existed = true;
+        } catch (getErr) {
+          if (getErr?.status !== 404) {
+            throw getErr;
+          }
+        }
+
         const genericObjectPayload = await buildGenericObjectPayload({
           objectId,
           classId,
@@ -2150,6 +2236,7 @@ export async function syncGoogleGenericForMerchantTemplate({
           textModulesData,
           template: templateValue,
           customer,
+          existingObject,
         });
         const frontCount = Array.isArray(textModulesData) ? textModulesData.length : 0;
         const termsIndex = frontCount;
@@ -2186,21 +2273,6 @@ export async function syncGoogleGenericForMerchantTemplate({
               templateValue?.primaryColor ||
               null,
           });
-        }
-
-        let existed = false;
-        let existingObject = null;
-
-        try {
-          existingObject = await walletRequest({
-            method: "GET",
-            path: `/walletobjects/v1/genericObject/${objectId}`,
-          });
-          existed = true;
-        } catch (getErr) {
-          if (getErr?.status !== 404) {
-            throw getErr;
-          }
         }
 
         if (existed) {
@@ -2242,9 +2314,12 @@ export async function syncGoogleGenericForMerchantTemplate({
             objectId,
             payload: genericObjectPayload,
           });
+          const updateMask = buildGenericObjectUpdateMask(genericObjectPayload);
           await walletRequest({
             method: "PATCH",
-            path: `/walletobjects/v1/genericObject/${objectId}`,
+            path: `/walletobjects/v1/genericObject/${objectId}?updateMask=${encodeURIComponent(
+              updateMask
+            )}`,
             body: genericObjectPayload,
           });
 
