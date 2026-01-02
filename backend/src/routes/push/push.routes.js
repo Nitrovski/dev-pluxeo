@@ -49,6 +49,29 @@ export async function pushRoutes(fastify) {
     return { ok: true, campaign };
   });
 
+  fastify.delete("/campaigns/:id", async (req, reply) => {
+    const merchantId = requireMerchantId(req);
+    if (!merchantId) return reply.code(401).send({ ok: false, message: "Unauthorized" });
+
+    const { id } = req.params;
+
+    const campaign = await PushCampaign.findOne({ _id: id, merchantId });
+    if (!campaign) return reply.code(404).send({ ok: false, message: "Campaign not found" });
+
+    if (campaign.status === "processing") {
+      return reply.code(409).send({ ok: false, message: "Campaign is processing" });
+    }
+
+    const allowedStatuses = new Set(["draft", "sent", "failed", "queued"]);
+    if (!allowedStatuses.has(campaign.status)) {
+      return reply.code(409).send({ ok: false, message: "Campaign cannot be deleted" });
+    }
+
+    await PushCampaign.deleteOne({ _id: id, merchantId });
+
+    return { ok: true };
+  });
+
   fastify.put("/campaigns/:id", async (req, reply) => {
     const merchantId = requireMerchantId(req);
     if (!merchantId) return reply.code(401).send({ ok: false, message: "Unauthorized" });
