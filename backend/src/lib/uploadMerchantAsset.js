@@ -1,4 +1,8 @@
-import { PutObjectCommand } from "@aws-sdk/client-s3";
+import {
+  PutObjectCommand,
+  ListObjectsV2Command,
+  DeleteObjectsCommand,
+} from "@aws-sdk/client-s3";
 import { r2Client } from "./r2Client.js";
 
 const allowedMimeTypes = ["image/png", "image/jpeg", "image/svg+xml"];
@@ -15,18 +19,70 @@ const kindToExtension = {
   },
 };
 
+// Kolik verzí chceme ponechat (doporučuju 3–5)
+const KEEP_LATEST_VERSIONS = Number(process.env.R2_ASSET_KEEP_LATEST || 3);
+
 function buildPublicUrl({ baseUrl, bucketName, key }) {
   const base = String(baseUrl || "").replace(/\/+$/, "");
   const k = String(key || "").replace(/^\/+/, "");
   if (!base) throw new Error("Missing R2_PUBLIC_BASE_URL");
 
-  // r2.dev → bucket je v hostname, nepatří do path
   if (base.includes(".r2.dev")) return `${base}/${k}`;
 
-  // fallback pro S3-style endpointy
   const b = String(bucketName || "").replace(/^\/+|\/+$/g, "");
   if (!b) throw new Error("Missing R2_BUCKET_NAME");
   return `${base}/${b}/${k}`;
+}
+
+function extractTimestampFromKey(key, kind) {
+  // očekáváme: merchants/<merchantId>/<kind>-<ts>.<ext>
+  // vrátí číslo nebo 0
+  const re = new RegExp(`${kind}-(\\d+)\\.`);
+  const m = String(key || "").match(re);
+  return m ? Number(m[1]) : 0;
+}
+
+async function cleanupOldAssets({ merchantId, kind, keepLatest }) {
+  // prefix: merchants/<merchantId>/logo-
+  const prefix = `merchants/${merchantId}/${kind}-`;
+
+  const list = await r2Client.send(
+    new ListObjectsV2Command({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Prefix: prefix,
+      // MaxKeys můžeš zvýšit, ale reálně to budou desítky
+      MaxKeys: 1000,
+    })
+  );
+
+  const items = (list.Contents || [])
+    .map((x) => x.Key)
+    .filter(Boolean);
+
+  if (items.length <= keepLatest) return;
+
+  // seřadit podle timestampu v key (nejnovější první)
+  const sorted = items.sort((a, b) => {
+    const ta = extractTimestampFromKey(a, kind);
+    const tb = extractTimestampFromKey(b, kind);
+    return tb - ta;
+  });
+
+  const toDelete = sorted.slice(keepLatest);
+
+  // bezpečnost: nemaž nic, co neodpovídá prefixu
+  const safeToDelete = toDelete.filter((k) => String(k).startsWith(prefix));
+  if (!safeToDelete.length) return;
+
+  await r2Client.send(
+    new DeleteObjectsCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Delete: {
+        Objects: safeToDelete.map((Key) => ({ Key })),
+        Quiet: true,
+      },
+    })
+  );
 }
 
 export const uploadMerchantAsset = async ({
@@ -44,20 +100,31 @@ export const uploadMerchantAsset = async ({
   }
 
   const ext = kindToExtension[kind][contentType];
-
-  // Produkční řešení: verzované názvy → žádné cache problémy
-  const version = Date.now(); // alternativně UUID/hash, ale timestamp stačí
+  const version = Date.now();
   const key = `merchants/${merchantId}/${kind}-${version}.${ext}`;
 
-  const command = new PutObjectCommand({
-    Bucket: process.env.R2_BUCKET_NAME,
-    Key: key,
-    Body: buffer,
-    ContentType: contentType,
-    CacheControl: "public, max-age=31536000, immutable",
-  });
+  await r2Client.send(
+    new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: key,
+      Body: buffer,
+      ContentType: contentType,
+      CacheControl: "public, max-age=31536000, immutable",
+    })
+  );
 
-  await r2Client.send(command);
+  // Cleanup starých verzí (neblokuj tvrdě upload, když cleanup selže)
+  try {
+    await cleanupOldAssets({
+      merchantId,
+      kind,
+      keepLatest: Math.max(1, KEEP_LATEST_VERSIONS),
+    });
+  } catch (e) {
+    // nechceme kvůli úklidu failnout upload
+    // případně logni přes fastify logger v route (tam je lepší kontext)
+    // console.warn("cleanupOldAssets failed:", e);
+  }
 
   return buildPublicUrl({
     baseUrl: process.env.R2_PUBLIC_BASE_URL,
