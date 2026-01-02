@@ -193,6 +193,10 @@ function normalizeWallet(inWallet) {
             body: pickString(tm.body, ""),
           }))
       : [],
+    detailsOverrideEnabled:
+      typeof googleIn.detailsOverrideEnabled === "boolean"
+        ? googleIn.detailsOverrideEnabled
+        : undefined,
     genericConfig: {
       enabled: Boolean(genericConfigIn.enabled),
       showStampsModule:
@@ -457,6 +461,9 @@ async function cardTemplateRoutes(fastify, options) {
           $set["wallet.google.heroImageUrl"] = pickString(g.heroImageUrl, "");
           $set["wallet.google.links"] = Array.isArray(g.links) ? g.links : [];
           $set["wallet.google.textModules"] = Array.isArray(g.textModules) ? g.textModules : [];
+          if (typeof g.detailsOverrideEnabled === "boolean") {
+            $set["wallet.google.detailsOverrideEnabled"] = g.detailsOverrideEnabled;
+          }
           $set["wallet.google.genericConfig"] =
             g.genericConfig || {
               enabled: false,
