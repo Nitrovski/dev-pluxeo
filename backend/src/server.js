@@ -14,6 +14,7 @@ import { publicCardRoutes } from "./routes/public.card.routes.js";
 import { merchantStampRoutes } from "./routes/merchant.stamp.routes.js";
 import { publicGoogleWalletRoutes } from "./routes/public.wallet.google.routes.js";
 import multipart from "@fastify/multipart";
+import pushRoutesPlugin from "./routes/push/index.js";
 
 import { Card } from "./models/card.model.js";
 
@@ -111,7 +112,7 @@ const start = async () => {
     fastify.register(merchantStampRoutes);
     fastify.register(merchantWalletGoogleRoutes);
     fastify.register(merchantAssetsRoutes);
-
+    fastify.register(pushRoutesPlugin);
 
     // Start serveru
     const port = process.env.PORT || 3000;
