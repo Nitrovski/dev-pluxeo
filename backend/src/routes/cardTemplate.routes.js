@@ -166,10 +166,7 @@ function normalizeWallet(inWallet) {
 
   const google = {
     enabled: Boolean(googleIn.enabled),
-    passType:
-      googleIn.passType === "generic" || googleIn.passType === "loyalty"
-        ? googleIn.passType
-        : "loyalty",
+    passType: "generic",
     headerText: normalizeHeaderText(googleIn.headerText),
     issuerName: pickString(googleIn.issuerName, ""),
     programName: pickString(googleIn.programName, ""),
@@ -295,7 +292,7 @@ async function cardTemplateRoutes(fastify, options) {
           wallet: {
             google: {
               enabled: false,
-              passType: "loyalty",
+              passType: "generic",
               headerText: null,
               issuerName: "",
               programName: "",
@@ -447,7 +444,6 @@ async function cardTemplateRoutes(fastify, options) {
           const g = wallet.google;
 
           $set["wallet.google.enabled"] = Boolean(g.enabled);
-          $set["wallet.google.passType"] = g.passType;
           $set["wallet.google.headerText"] = normalizeHeaderText(g.headerText);
           $set["wallet.google.issuerName"] = pickString(g.issuerName, "");
           $set["wallet.google.programName"] = pickString(g.programName, "");
