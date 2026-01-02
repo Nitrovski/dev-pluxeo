@@ -407,6 +407,7 @@ async function cardTemplateRoutes(fastify, options) {
       const $set = { merchantId };
       const hasDetailsText = Object.prototype.hasOwnProperty.call(payload, "detailsText");
       const hasTermsText = Object.prototype.hasOwnProperty.call(payload, "termsText");
+      const googleIn = payload?.wallet?.google;
 
       for (const [key, value] of Object.entries(update)) {
         if (value === undefined || value === null) continue;
@@ -461,8 +462,8 @@ async function cardTemplateRoutes(fastify, options) {
           $set["wallet.google.heroImageUrl"] = pickString(g.heroImageUrl, "");
           $set["wallet.google.links"] = Array.isArray(g.links) ? g.links : [];
           $set["wallet.google.textModules"] = Array.isArray(g.textModules) ? g.textModules : [];
-          if (typeof g.detailsOverrideEnabled === "boolean") {
-            $set["wallet.google.detailsOverrideEnabled"] = g.detailsOverrideEnabled;
+          if (typeof googleIn?.detailsOverrideEnabled === "boolean") {
+            $set["wallet.google.detailsOverrideEnabled"] = googleIn.detailsOverrideEnabled;
           }
           $set["wallet.google.genericConfig"] =
             g.genericConfig || {
@@ -504,19 +505,17 @@ async function cardTemplateRoutes(fastify, options) {
 
       if (hasTermsText) {
         if (typeof payload.termsText === "string") {
-          const trimmed = payload.termsText.trim();
-          $set.termsText = trimmed ? trimmed : null;
-        } else if (payload.termsText === null) {
-          $set.termsText = null;
+          $set.termsText = payload.termsText;
+        } else if (payload.termsText == null) {
+          $set.termsText = "";
         }
       }
 
       if (hasDetailsText) {
         if (typeof payload.detailsText === "string") {
-          const trimmed = payload.detailsText.trim();
-          $set.detailsText = trimmed ? trimmed : null;
-        } else if (payload.detailsText === null) {
-          $set.detailsText = null;
+          $set.detailsText = payload.detailsText;
+        } else if (payload.detailsText == null) {
+          $set.detailsText = "";
         }
       }
 
