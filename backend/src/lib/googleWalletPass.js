@@ -676,15 +676,19 @@ function buildDetailsTemplateOverride(
   {
     detailsFieldPath = null,
     termsFieldPath = null,
+    extraFieldPaths = null,
     removeFieldPaths = null,
   } = {}
 ) {
   const existingItems = Array.isArray(existingOverride?.detailsItemInfos)
     ? existingOverride.detailsItemInfos
     : [];
+  const extraPaths = Array.isArray(extraFieldPaths)
+    ? extraFieldPaths.filter(Boolean)
+    : [];
   const fieldPathsToRemove = Array.isArray(removeFieldPaths)
     ? removeFieldPaths
-    : [detailsFieldPath, termsFieldPath].filter(Boolean);
+    : [detailsFieldPath, termsFieldPath, ...extraPaths].filter(Boolean);
 
   const filteredItems = existingItems.filter(
     (info) =>
@@ -714,6 +718,16 @@ function buildDetailsTemplateOverride(
       },
     });
   }
+
+  extraPaths.forEach((fieldPath) => {
+    detailsItemInfos.push({
+      item: {
+        firstValue: {
+          fields: [{ fieldPath }],
+        },
+      },
+    });
+  });
 
   return {
     detailsTemplateOverride: {
@@ -798,6 +812,7 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
         detailsIndex == null ? null : `object.textModulesData[${detailsIndex}].body`,
       termsFieldPath:
         termsIndex == null ? null : `object.textModulesData[${termsIndex}].body`,
+      extraFieldPaths: ["object.textModulesData[8].body"],
       removeFieldPaths: [
         "object.customData.termsText",
         "object.textModulesData['terms'].body",

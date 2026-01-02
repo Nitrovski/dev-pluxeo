@@ -5,6 +5,7 @@ import { Card } from "../../models/card.model.js";
 import { googleWalletConfig } from "../../config/googleWallet.config.js";
 import { makeObjectId } from "../../lib/googleWalletIds.js";
 import { addGenericWalletMessage } from "../../lib/push/googleWalletPush.js";
+import { patchGenericObjectTextModuleIndex } from "../../lib/push/googleWalletGenericObjectPatch.js";
 
 function resolveObjectId(card) {
   return (
@@ -29,8 +30,8 @@ export async function runCampaignSend(campaignId) {
       .select({ _id: 1, googleWallet: 1 })
       .lean();
 
-    // MVP doporucení: posílat jen na karty, které mají uložené objectId
-    // (tzn. reálne jsou/ byly syncnuté do Google Wallet flow)
+    // MVP doporucenï¿½: posï¿½lat jen na karty, kterï¿½ majï¿½ uloï¿½enï¿½ objectId
+    // (tzn. reï¿½lne jsou/ byly syncnutï¿½ do Google Wallet flow)
     const targets = cards.filter((c) => c?.googleWallet?.objectId);
 
     let sent = 0;
@@ -39,6 +40,8 @@ export async function runCampaignSend(campaignId) {
     for (const card of targets) {
       const objectId = resolveObjectId(card);
 
+      let errorMessage = "";
+
       try {
         await addGenericWalletMessage({
           objectId,
@@ -46,7 +49,36 @@ export async function runCampaignSend(campaignId) {
           body: campaign.body,
           notify: campaign.notify,
         });
+      } catch (e) {
+        errorMessage = `addMessage failed: ${e?.message || String(e)}`;
+      }
 
+      if (!errorMessage) {
+        try {
+          await patchGenericObjectTextModuleIndex({
+            objectId,
+            index: 8,
+            header: campaign.header,
+            body: campaign.body,
+          });
+        } catch (e) {
+          errorMessage = `patchTextModule failed: ${e?.message || String(e)}`;
+        }
+      }
+
+      if (errorMessage) {
+        failed += 1;
+        await WalletPushLog.create({
+          merchantId: campaign.merchantId,
+          campaignId: campaign._id,
+          cardId: card._id,
+          objectId,
+          notify: campaign.notify,
+          status: "failed",
+          kind: "campaign",
+          error: errorMessage,
+        });
+      } else {
         await WalletPushLog.create({
           merchantId: campaign.merchantId,
           campaignId: campaign._id,
@@ -58,18 +90,6 @@ export async function runCampaignSend(campaignId) {
         });
 
         sent += 1;
-      } catch (e) {
-        failed += 1;
-        await WalletPushLog.create({
-          merchantId: campaign.merchantId,
-          campaignId: campaign._id,
-          cardId: card._id,
-          objectId,
-          notify: campaign.notify,
-          status: "failed",
-          kind: "campaign",
-          error: e?.message || String(e),
-        });
       }
     }
 
