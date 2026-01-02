@@ -747,6 +747,18 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
   const baseIndex = GENERIC_FRONT_SLOT_IDS.length;
   const detailsIndex = baseIndex;
   const termsIndex = baseIndex + 1;
+  const promoIndex = baseIndex + 2;
+  const detailsFieldPaths = [
+    `object.textModulesData[${detailsIndex}].body`,
+    `object.textModulesData[${termsIndex}].body`,
+    `object.textModulesData[${promoIndex}].body`,
+  ];
+  const existingFieldPaths = Array.isArray(existingDetailsOverride?.detailsItemInfos)
+    ? existingDetailsOverride.detailsItemInfos.flatMap(
+        (info) =>
+          info?.item?.firstValue?.fields?.map((field) => field?.fieldPath) || []
+      )
+    : [];
   const slotIndexById = new Map(
     frontSlots.map((slot, index) => [slot.slotId, index])
   );
@@ -806,16 +818,14 @@ function buildGenericClassTemplateInfo({ template, existingDetailsOverride = nul
 
   return {
     ...buildDetailsTemplateOverride(existingDetailsOverride, {
-      detailsFieldPath:
-        detailsIndex == null ? null : `object.textModulesData[${detailsIndex}].body`,
-      termsFieldPath:
-        termsIndex == null ? null : `object.textModulesData[${termsIndex}].body`,
-      extraFieldPaths: ["object.textModulesData[8].body"],
+      detailsFieldPath: null,
+      termsFieldPath: null,
+      extraFieldPaths: detailsFieldPaths,
       removeFieldPaths: [
+        ...existingFieldPaths,
         "object.customData.termsText",
         "object.textModulesData['terms'].body",
-        `object.textModulesData[${baseIndex}].body`,
-        `object.textModulesData[${baseIndex + 1}].body`,
+        ...detailsFieldPaths,
       ],
     }),
     cardTemplateOverride,
@@ -1041,27 +1051,26 @@ function buildGenericObjectTextModulesData({
     modules[7] = { id: "terms", body: termsText };
   }
 
-  const promoText = sanitizeGenericPromoText(template?.promoText);
-  if (promoText) {
-    modules[8] = {
-      id: "promo",
-      header: GENERIC_FIELD_LABELS.promoText,
-      body: promoText,
-    };
-  } else {
-    const existingModule = Array.isArray(existingObject?.textModulesData)
-      ? existingObject.textModulesData[8]
-      : null;
-    const existingBody = trimTextModuleValue(existingModule?.body);
+  const existingModule = Array.isArray(existingObject?.textModulesData)
+    ? existingObject.textModulesData[8]
+    : null;
 
-    if (existingBody) {
-      modules[8] = {
-        ...existingModule,
-        id: existingModule?.id || "tm_8",
-        header: typeof existingModule?.header === "string" ? existingModule.header : "",
-        body: existingModule?.body ?? "",
-      };
+  if (existingModule) {
+    modules[8] = {
+      ...existingModule,
+      id: existingModule?.id || "tm_8",
+      header: typeof existingModule?.header === "string" ? existingModule.header : "",
+      body: typeof existingModule?.body === "string" ? existingModule.body : "",
+    };
+    if (googleWalletConfig.isDevEnv) {
+      console.log("GW_GENERIC_TEXT_MODULE_8_SOURCE", {
+        source: "existing",
+        hasHeader: Boolean(existingModule?.header),
+        hasBody: Boolean(existingModule?.body),
+      });
     }
+  } else if (googleWalletConfig.isDevEnv) {
+    console.log("GW_GENERIC_TEXT_MODULE_8_SOURCE", { source: "empty" });
   }
 
   return modules;
