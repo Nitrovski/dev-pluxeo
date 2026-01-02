@@ -250,7 +250,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
 
       const template = await CardTemplate.findOne({ merchantId }).lean();
       const googleWalletEnabled = Boolean(template?.wallet?.google?.enabled);
-      const requestedPassType = template?.wallet?.google?.passType || "loyalty";
+      const desiredPassType = resolveDesiredPassType(card, template);
 
       const { url, classId, objectId, passType } = await createAddToWalletLinkForCard(
         cardId,
@@ -262,7 +262,7 @@ export async function merchantWalletGoogleRoutes(fastify) {
           merchantId,
           cardId: card._id,
           passType,
-          requestedPassType,
+          requestedPassType: desiredPassType,
           googleWalletEnabled,
           classId,
           objectId,

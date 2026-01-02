@@ -2338,30 +2338,18 @@ export async function syncGoogleGenericForMerchantTemplate({
 export function resolveDesiredPassType(cardDoc, template) {
   const mode = getGoogleWalletMode();
   const templatePassType = template?.wallet?.google?.passType;
-  const genericEnabled =
-    templatePassType === "generic" &&
-    template?.wallet?.google?.genericConfig?.enabled === true;
+  const hasLegacyPassType =
+    templatePassType === "loyalty" || cardDoc?.googleWallet?.passType === "loyalty";
 
-  let passType;
+  let passType = "generic";
 
-  if (mode === "generic_only") {
-    passType = "generic";
-    if (
-      !hasLoggedLoyaltyIgnored &&
-      (templatePassType === "loyalty" || cardDoc?.googleWallet?.passType === "loyalty")
-    ) {
-      console.warn("LOYALTY_CONFIG_IGNORED_GENERIC_ONLY", {
-        templatePassType,
-        cardPassType: cardDoc?.googleWallet?.passType ?? null,
-      });
-      hasLoggedLoyaltyIgnored = true;
-    }
-  } else if (mode === "loyalty_only") {
-    passType = "loyalty";
-  } else if (template) {
-    passType = genericEnabled ? "generic" : "loyalty";
-  } else {
-    passType = cardDoc?.googleWallet?.passType === "generic" ? "generic" : "loyalty";
+  if (!hasLoggedLoyaltyIgnored && (hasLegacyPassType || mode === "loyalty_only")) {
+    console.warn("LOYALTY_CONFIG_IGNORED", {
+      mode,
+      templatePassType,
+      cardPassType: cardDoc?.googleWallet?.passType ?? null,
+    });
+    hasLoggedLoyaltyIgnored = true;
   }
 
   if (!hasLoggedMode) {
@@ -2576,7 +2564,7 @@ export async function ensureGooglePassForCard({
     result = await ensureLoyaltyObjectForCard({ merchantId, cardId, forcePatch });
   }
 
-  const nextPassType = passType || "loyalty";
+  const nextPassType = passType || "generic";
   const nextObjectId = result?.objectId || null;
 
   card.googleWallet = card.googleWallet || {};
@@ -2620,7 +2608,7 @@ export async function ensureLoyaltyObjectForWalletToken({ walletToken }) {
 export function buildAddToGoogleWalletUrl({
   classId,
   objectId,
-  passType = "loyalty",
+  passType = "generic",
   logger = null,
 }) {
   if (!objectId) {
@@ -2631,14 +2619,12 @@ export function buildAddToGoogleWalletUrl({
     throw new Error("classId is required for Save to Google Wallet");
   }
 
-  let payloadKey = "loyaltyObjects";
+  let payloadKey = "genericObjects";
 
-  if (passType === "generic") {
-    payloadKey = "genericObjects";
-  } else if (passType !== "loyalty") {
+  if (passType !== "generic") {
     logger?.warn?.(
       { passType },
-      "unsupported Google Wallet passType, falling back to loyalty"
+      "unsupported Google Wallet passType, falling back to generic"
     );
   }
 
