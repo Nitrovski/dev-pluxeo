@@ -118,6 +118,84 @@ function normalizeHeaderText(value) {
   return trimmed ? trimmed : null;
 }
 
+function normalizeAppleWallet(template) {
+  const walletIn = isObj(template?.wallet) ? template.wallet : {};
+  const appleIn = isObj(walletIn.apple) ? walletIn.apple : {};
+  const googleIn = isObj(walletIn.google) ? walletIn.google : {};
+  const colorsIn = isObj(appleIn.colors) ? appleIn.colors : {};
+  const imagesIn = isObj(appleIn.images) ? appleIn.images : {};
+  const layoutIn = isObj(appleIn.layout) ? appleIn.layout : {};
+
+  const programName = pickString(template?.programName, "");
+  const headline = pickString(template?.headline, "");
+  const primaryColor = pickString(template?.primaryColor, "");
+  const rootLogoUrl = pickString(template?.logoUrl, "");
+
+  const googleHeaderText = normalizeHeaderText(googleIn.headerText);
+  const googleIssuerName = pickString(googleIn.issuerName, "");
+  const googleLogoUrl = pickString(googleIn.logoUrl, "");
+  const googleBackgroundColor = pickString(googleIn.backgroundColor, "");
+
+  const resolvedLogoText =
+    pickString(appleIn.logoText, "") ||
+    programName ||
+    headline ||
+    googleHeaderText ||
+    "Pluxeo";
+  const resolvedIssuerName = pickString(appleIn.issuerName, "") || googleIssuerName || "Pluxeo";
+
+  const backgroundColor =
+    pickString(colorsIn.backgroundColor, "") ||
+    primaryColor ||
+    googleBackgroundColor ||
+    "#111827";
+  const foregroundColor = pickString(colorsIn.foregroundColor, "") || "#FFFFFF";
+  const labelColor = pickString(colorsIn.labelColor, "") || "#DDDDDD";
+
+  const logoUrl = pickString(imagesIn.logoUrl, "") || rootLogoUrl || googleLogoUrl || "";
+  const iconUrl = pickString(imagesIn.iconUrl, "") || logoUrl;
+  const stripUrl = pickString(imagesIn.stripUrl, "") || "";
+
+  const enabled = appleIn.enabled !== undefined ? Boolean(appleIn.enabled) : true;
+  const style =
+    appleIn.style === "generic" || appleIn.style === "storeCard" ? appleIn.style : "storeCard";
+  const primarySource =
+    layoutIn.primarySource === "programName" ||
+    layoutIn.primarySource === "none" ||
+    layoutIn.primarySource === "header"
+      ? layoutIn.primarySource
+      : "header";
+
+  const secondarySlotIds = Array.isArray(layoutIn.secondarySlotIds)
+    ? layoutIn.secondarySlotIds.filter((slot) => typeof slot === "string")
+    : ["stamps", "rewards"];
+  const auxiliarySlotIds = Array.isArray(layoutIn.auxiliarySlotIds)
+    ? layoutIn.auxiliarySlotIds.filter((slot) => typeof slot === "string")
+    : ["websiteUrl", "openingHours", "tier", "email"];
+
+  return {
+    enabled,
+    style,
+    logoText: resolvedLogoText,
+    issuerName: resolvedIssuerName,
+    colors: {
+      backgroundColor,
+      foregroundColor,
+      labelColor,
+    },
+    images: {
+      logoUrl,
+      iconUrl,
+      stripUrl,
+    },
+    layout: {
+      primarySource,
+      secondarySlotIds,
+      auxiliarySlotIds,
+    },
+  };
+}
+
 const VALID_CARD_TYPES = new Set(["custom", "stamps", "coupon", "info"]);
 
 function resolveCardType(template) {
@@ -153,11 +231,10 @@ function createConcurrencyQueue(limit, items, handler) {
  * Normalize wallet shape so FE never receives wallet: null / invalid.
  * Also normalizes links to { label, uri } (FE schema expects that).
  */
-function normalizeWallet(inWallet) {
+function normalizeWallet(inWallet, template) {
   const w = isObj(inWallet) ? inWallet : {};
 
   const googleIn = isObj(w.google) ? w.google : {};
-  const appleIn = isObj(w.apple) ? w.apple : {};
 
   const genericConfigIn = isObj(googleIn.genericConfig) ? googleIn.genericConfig : {};
   const layoutIn = genericConfigIn.layout;
@@ -212,15 +289,15 @@ function normalizeWallet(inWallet) {
     synced: typeof googleIn.synced === "boolean" ? googleIn.synced : undefined,
   };
 
-  // apple currently empty object, but keep it stable
-  const apple = isObj(appleIn) ? appleIn : {};
+  const appleSource = template || { wallet: w };
+  const apple = normalizeAppleWallet(appleSource);
 
   return { google, apple };
 }
 
 function toApi(template, merchantId) {
   // vracíme tvar, který FE očekává (CardTemplatePage)
-  const wallet = normalizeWallet(template?.wallet);
+  const wallet = normalizeWallet(template?.wallet, template);
   const cardType = resolveCardType(template);
   const freeStampsToReward = resolveFreeStampsToReward(template);
 
@@ -371,6 +448,31 @@ async function cardTemplateRoutes(fastify, options) {
         ? incomingCardType
         : "custom";
 
+      const hasWallet = Object.prototype.hasOwnProperty.call(payload, "wallet");
+      const hasAppleWallet =
+        hasWallet &&
+        isObj(payload.wallet) &&
+        Object.prototype.hasOwnProperty.call(payload.wallet, "apple");
+
+      const templateForAppleNormalization = {
+        ...(existingTemplate || {}),
+        programName: payload.programName ?? existingTemplate?.programName,
+        headline: payload.headline ?? existingTemplate?.headline,
+        primaryColor: payload.primaryColor ?? existingTemplate?.primaryColor,
+        logoUrl: payload.logoUrl ?? existingTemplate?.logoUrl,
+        wallet: {
+          ...(existingTemplate?.wallet || {}),
+          google: {
+            ...(existingTemplate?.wallet?.google || {}),
+            ...(payload?.wallet?.google || {}),
+          },
+          apple: {
+            ...(existingTemplate?.wallet?.apple || {}),
+            ...(payload?.wallet?.apple || {}),
+          },
+        },
+      };
+
       const update = {
         programType: payload.programType, // "stamps" | "coupon"
         cardType: payload.cardType,
@@ -388,7 +490,7 @@ async function cardTemplateRoutes(fastify, options) {
         logoUrl: payload.logoUrl,
 
         // DŮLEŽITÉ: normalizuj wallet, nikdy neukládej null
-        wallet: normalizeWallet(payload.wallet),
+        wallet: hasWallet ? normalizeWallet(payload.wallet, templateForAppleNormalization) : undefined,
 
         rules: {
           freeStampsToReward: payload.freeStampsToReward,
@@ -438,7 +540,7 @@ async function cardTemplateRoutes(fastify, options) {
             $set.rules = rules;
           }
         } else if (key === "wallet") {
-          const wallet = normalizeWallet(value);
+          const wallet = normalizeWallet(value, templateForAppleNormalization);
 
           // save google
           const g = wallet.google;
@@ -466,8 +568,10 @@ async function cardTemplateRoutes(fastify, options) {
               layout: DEFAULT_GENERIC_LAYOUT,
             };
 
-          // save apple (keep stable object)
-          $set["wallet.apple"] = wallet.apple || {};
+          // save apple only if payload includes it
+          if (hasAppleWallet) {
+            $set["wallet.apple"] = normalizeAppleWallet(templateForAppleNormalization);
+          }
         } else if (key === "programType") {
           const normalizedProgramType = VALID_CARD_TYPES.has(value) ? value : "custom";
           $set.programType = normalizedProgramType;
@@ -517,7 +621,7 @@ async function cardTemplateRoutes(fastify, options) {
       );
 
       // extra safety: normalize wallet from DB before using/sending
-      template.wallet = normalizeWallet(template.wallet);
+      template.wallet = normalizeWallet(template.wallet, template);
       const templateValue = template.toObject();
 
       const effectivePassType = resolveDesiredPassType(null, template);

@@ -20,6 +20,34 @@ const GenericLayoutRowSchema = new Schema(
   { _id: false }
 );
 
+const AppleWalletSchema = new Schema(
+  {
+    enabled: { type: Boolean, default: true },
+    style: { type: String, enum: ["storeCard", "generic"], default: "storeCard" },
+    logoText: { type: String, default: "" },
+    issuerName: { type: String, default: "" },
+    colors: {
+      backgroundColor: { type: String, default: "" },
+      foregroundColor: { type: String, default: "" },
+      labelColor: { type: String, default: "" },
+    },
+    images: {
+      logoUrl: { type: String, default: "" },
+      iconUrl: { type: String, default: "" },
+      stripUrl: { type: String, default: "" },
+    },
+    layout: {
+      primarySource: { type: String, enum: ["header", "programName", "none"], default: "header" },
+      secondarySlotIds: { type: [String], default: ["stamps", "rewards"] },
+      auxiliarySlotIds: {
+        type: [String],
+        default: ["websiteUrl", "openingHours", "tier", "email"],
+      },
+    },
+  },
+  { _id: false }
+);
+
 const CardTemplateSchema = new Schema(
   {
     merchantId: {
@@ -159,6 +187,10 @@ const CardTemplateSchema = new Schema(
             body: { type: String, default: "" },
           },
         ],
+      },
+      apple: {
+        type: AppleWalletSchema,
+        default: undefined,
       },
     },
     walletSync: {
