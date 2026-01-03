@@ -1,6 +1,8 @@
 // src/models/merchant.model.js
 import mongoose from "mongoose";
 
+const { Schema } = mongoose;
+
 const merchantSchema = new mongoose.Schema(
   {
     name: {
@@ -9,7 +11,7 @@ const merchantSchema = new mongoose.Schema(
       trim: true,
     },
     template: {
-      type: Schema.Types.Mixed, // flexibilní – mužeme menit strukturu na FE
+      type: Schema.Types.Mixed, // flexibilnï¿½ ï¿½ muï¿½eme menit strukturu na FE
       default: {},
     },
     email: {
@@ -23,7 +25,7 @@ const merchantSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
-    // treba pozdeji tiers / plány / nastavení
+    // treba pozdeji tiers / plï¿½ny / nastavenï¿½
     // plan: { type: String, default: "free" },
   },
   {
