@@ -1,3 +1,7 @@
+// NOTE:
+// textModulesData[8] is reserved for push/updates.
+// Do NOT fill from template promo/front content.
+// Must be preserved during template sync.
 import {
   getGoogleWalletMode,
   googleWalletConfig,
