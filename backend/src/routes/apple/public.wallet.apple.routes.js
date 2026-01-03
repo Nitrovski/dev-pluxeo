@@ -1,4 +1,6 @@
 import { Card } from "../../models/card.model.js";
+import { CardTemplate } from "../../models/cardTemplate.model.js";
+import { Merchant } from "../../models/merchant.model.js";
 import { buildPublicCardPayload } from "../../lib/publicPayload.js";
 import { buildApplePkpassBuffer } from "../../lib/apple/appleWallet.pass.js";
 import { getAppleWalletConfig } from "../../lib/apple/appleWallet.config.js";
@@ -47,6 +49,10 @@ export default async function publicAppleWalletRoutes(fastify) {
       }
 
       const publicPayload = await buildPublicCardPayload(card._id);
+      const template = await CardTemplate.findOne({
+        merchantId: card.merchantId,
+      }).lean();
+      const merchant = await Merchant.findById(card.merchantId).lean();
 
       if (!publicPayload) {
         request.log?.warn?.(
@@ -67,6 +73,8 @@ export default async function publicAppleWalletRoutes(fastify) {
         card,
         publicPayload,
         walletToken,
+        template,
+        merchant,
         logger: request.log,
       });
 
