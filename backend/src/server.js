@@ -37,6 +37,7 @@ import { cardTemplateStarterRoutes } from "./routes/cardTemplate.starters.routes
 import { googleWalletConfig } from "./config/googleWallet.config.js";
 import { merchantWalletGoogleRoutes } from "./routes/merchant.wallet.google.routes.js";
 import { merchantAssetsRoutes } from "./routes/merchant.assets.routes.js";
+import publicWalletAppleRoutes from "./routes/apple/public.wallet.apple.routes.js";
 
 const fastify = Fastify({
   logger: true,
@@ -109,6 +110,11 @@ const start = async () => {
     fastify.register(merchantScanRoutes);
     fastify.register(publicCardRoutes);
     fastify.register(publicGoogleWalletRoutes);
+    // Local test:
+    // curl -X POST "http://localhost:3000/api/public/wallet/apple/link" \
+    //   -H "Content-Type: application/json" \
+    //   -d '{"walletToken":"<token>"}' --output test.pkpass
+    fastify.register(publicWalletAppleRoutes);
     fastify.register(merchantStampRoutes);
     fastify.register(merchantWalletGoogleRoutes);
     fastify.register(merchantAssetsRoutes);
