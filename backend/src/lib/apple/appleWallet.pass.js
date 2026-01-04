@@ -25,6 +25,42 @@ function normalizeHeaderText(value) {
   return trimmed ? trimmed : null;
 }
 
+function normalizeAppleSlot(slot) {
+  if (!isObj(slot)) return null;
+
+  const fieldId = typeof slot.fieldId === "string" ? slot.fieldId.trim() : "";
+  if (!fieldId) return null;
+
+  const label = typeof slot.label === "string" ? slot.label : null;
+  const showLabel = typeof slot.showLabel === "boolean" ? slot.showLabel : undefined;
+
+  return { fieldId, label, showLabel };
+}
+
+function normalizeAppleSlots(inputSlots, inputIds, fallbackIds) {
+  const fallbackSlots = Array.isArray(fallbackIds)
+    ? fallbackIds
+        .filter((slotId) => typeof slotId === "string" && slotId.trim())
+        .map((fieldId) => ({ fieldId }))
+    : [];
+
+  let slots = [];
+
+  if (Array.isArray(inputSlots)) {
+    slots = inputSlots.map(normalizeAppleSlot).filter((slot) => slot);
+  } else if (Array.isArray(inputIds)) {
+    slots = inputIds
+      .filter((slotId) => typeof slotId === "string" && slotId.trim())
+      .map((fieldId) => ({ fieldId }));
+  }
+
+  if (slots.length === 0) {
+    slots = fallbackSlots;
+  }
+
+  return slots;
+}
+
 function toRgbString(hex) {
   const normalized = String(hex || "")
     .trim()
@@ -171,12 +207,18 @@ function normalizeAppleWallet(template) {
       ? layoutIn.primarySource
       : "header";
 
-  const secondarySlotIds = Array.isArray(layoutIn.secondarySlotIds)
-    ? layoutIn.secondarySlotIds.filter((slot) => typeof slot === "string")
-    : [];
-  const auxiliarySlotIds = Array.isArray(layoutIn.auxiliarySlotIds)
-    ? layoutIn.auxiliarySlotIds.filter((slot) => typeof slot === "string")
-    : [];
+  const secondarySlots = normalizeAppleSlots(
+    layoutIn.secondarySlots,
+    layoutIn.secondarySlotIds,
+    ["stamps", "rewards"]
+  );
+  const auxiliarySlots = normalizeAppleSlots(
+    layoutIn.auxiliarySlots,
+    layoutIn.auxiliarySlotIds,
+    ["websiteUrl", "openingHours", "tier", "email"]
+  );
+  const secondarySlotIds = secondarySlots.map((slot) => slot.fieldId);
+  const auxiliarySlotIds = auxiliarySlots.map((slot) => slot.fieldId);
   const maxLayout = isObj(layoutIn.max) ? layoutIn.max : null;
   const hasMax =
     maxLayout &&
@@ -210,7 +252,9 @@ function normalizeAppleWallet(template) {
       primaryFieldId,
       primarySlotIds,
       primarySource,
+      secondarySlots,
       secondarySlotIds,
+      auxiliarySlots,
       auxiliarySlotIds,
       ...(max ? { max } : {}),
     },
@@ -307,18 +351,35 @@ function buildSlotField({ fieldId, field, fieldKeyPrefix }) {
   };
 }
 
-function buildFieldsFromIds({ fieldIds, max, usedFieldIds, fieldKeyPrefix, template, publicPayload }) {
+function buildFieldsFromSlots({
+  slots,
+  max,
+  usedFieldIds,
+  fieldKeyPrefix,
+  template,
+  publicPayload,
+}) {
   const fields = [];
-  for (const slotId of fieldIds) {
+  for (const slot of slots) {
     if (fields.length >= max) break;
+    const slotId = typeof slot?.fieldId === "string" ? slot.fieldId : "";
+    if (!slotId) continue;
     if (usedFieldIds.has(slotId)) continue;
     const resolvedField = resolveAppleFieldValue(slotId, {
       template,
       publicPayload,
     });
+    if (!resolvedField) continue;
+    let label = resolvedField.label;
+    if (typeof slot?.label === "string") {
+      label = slot.label;
+    }
+    if (slot?.showLabel === false) {
+      label = "";
+    }
     const field = buildSlotField({
       fieldId: slotId,
-      field: resolvedField,
+      field: { ...resolvedField, label },
       fieldKeyPrefix,
     });
     if (!field) continue;
@@ -445,8 +506,8 @@ export async function buildApplePkpassBuffer({
     const maxAuxiliary = walletApple.layout.max?.auxiliary ?? 4;
 
     primaryFields.push(
-      ...buildFieldsFromIds({
-        fieldIds: primaryFieldIds,
+      ...buildFieldsFromSlots({
+        slots: primaryFieldIds.map((fieldId) => ({ fieldId })),
         max: maxPrimary,
         usedFieldIds,
         fieldKeyPrefix: "primary",
@@ -455,8 +516,8 @@ export async function buildApplePkpassBuffer({
       })
     );
     secondaryFields.push(
-      ...buildFieldsFromIds({
-        fieldIds: walletApple.layout.secondarySlotIds,
+      ...buildFieldsFromSlots({
+        slots: walletApple.layout.secondarySlots,
         max: maxSecondary,
         usedFieldIds,
         fieldKeyPrefix: "secondary",
@@ -465,8 +526,8 @@ export async function buildApplePkpassBuffer({
       })
     );
     auxiliaryFields.push(
-      ...buildFieldsFromIds({
-        fieldIds: walletApple.layout.auxiliarySlotIds,
+      ...buildFieldsFromSlots({
+        slots: walletApple.layout.auxiliarySlots,
         max: maxAuxiliary,
         usedFieldIds,
         fieldKeyPrefix: "aux",
