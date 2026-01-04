@@ -118,6 +118,42 @@ function normalizeHeaderText(value) {
   return trimmed ? trimmed : null;
 }
 
+function normalizeAppleSlot(slot) {
+  if (!isObj(slot)) return null;
+
+  const fieldId = typeof slot.fieldId === "string" ? slot.fieldId.trim() : "";
+  if (!fieldId) return null;
+
+  const label = typeof slot.label === "string" ? slot.label : null;
+  const showLabel = typeof slot.showLabel === "boolean" ? slot.showLabel : undefined;
+
+  return { fieldId, label, showLabel };
+}
+
+function normalizeAppleSlots(inputSlots, inputIds, fallbackIds) {
+  const fallbackSlots = Array.isArray(fallbackIds)
+    ? fallbackIds
+        .filter((slotId) => typeof slotId === "string" && slotId.trim())
+        .map((fieldId) => ({ fieldId }))
+    : [];
+
+  let slots = [];
+
+  if (Array.isArray(inputSlots)) {
+    slots = inputSlots.map(normalizeAppleSlot).filter((slot) => slot);
+  } else if (Array.isArray(inputIds)) {
+    slots = inputIds
+      .filter((slotId) => typeof slotId === "string" && slotId.trim())
+      .map((fieldId) => ({ fieldId }));
+  }
+
+  if (slots.length === 0) {
+    slots = fallbackSlots;
+  }
+
+  return slots;
+}
+
 function normalizeAppleWallet(template) {
   const walletIn = isObj(template?.wallet) ? template.wallet : {};
   const appleIn = isObj(walletIn.apple) ? walletIn.apple : {};
@@ -166,12 +202,16 @@ function normalizeAppleWallet(template) {
       ? layoutIn.primarySource
       : "header";
 
-  const secondarySlotIds = Array.isArray(layoutIn.secondarySlotIds)
-    ? layoutIn.secondarySlotIds.filter((slot) => typeof slot === "string")
-    : ["stamps", "rewards"];
-  const auxiliarySlotIds = Array.isArray(layoutIn.auxiliarySlotIds)
-    ? layoutIn.auxiliarySlotIds.filter((slot) => typeof slot === "string")
-    : ["websiteUrl", "openingHours", "tier", "email"];
+  const secondarySlots = normalizeAppleSlots(
+    layoutIn.secondarySlots,
+    layoutIn.secondarySlotIds,
+    ["stamps", "rewards"]
+  );
+  const auxiliarySlots = normalizeAppleSlots(
+    layoutIn.auxiliarySlots,
+    layoutIn.auxiliarySlotIds,
+    ["websiteUrl", "openingHours", "tier", "email"]
+  );
 
   return {
     enabled,
@@ -190,8 +230,8 @@ function normalizeAppleWallet(template) {
     },
     layout: {
       primarySource,
-      secondarySlotIds,
-      auxiliarySlotIds,
+      secondarySlots,
+      auxiliarySlots,
     },
   };
 }
