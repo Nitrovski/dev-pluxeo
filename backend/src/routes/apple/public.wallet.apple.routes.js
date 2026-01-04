@@ -7,8 +7,8 @@ import { getAppleWalletConfig } from "../../lib/apple/appleWallet.config.js";
 
 /**
  * Local test:
- * curl -X POST "http://localhost:3000/api/public/wallet/apple/link" \\
- *   -H "Content-Type: application/json" \\
+ * curl -X POST "http://localhost:3000/api/public/wallet/apple/link" \
+ *   -H "Content-Type: application/json" \
  *   -d '{"walletToken":"<token>"}' --output test.pkpass
  */
 export default async function publicAppleWalletRoutes(fastify) {
@@ -41,18 +41,11 @@ export default async function publicAppleWalletRoutes(fastify) {
       );
 
       if (!card) {
-        request.log?.warn?.(
-          { walletTokenPrefix },
-          "[APPLE_WALLET] card not found"
-        );
+        request.log?.warn?.({ walletTokenPrefix }, "[APPLE_WALLET] card not found");
         return reply.code(404).send({ ok: false, message: "Card not found" });
       }
 
       const publicPayload = await buildPublicCardPayload(card._id);
-      const template = await CardTemplate.findOne({
-        merchantId: card.merchantId,
-      }).lean();
-      const merchant = await Merchant.findById(card.merchantId).lean();
 
       if (!publicPayload) {
         request.log?.warn?.(
@@ -60,6 +53,21 @@ export default async function publicAppleWalletRoutes(fastify) {
           "[APPLE_WALLET] public payload missing"
         );
         return reply.code(404).send({ ok: false, message: "Card not found" });
+      }
+
+      // Load template + merchant using merchantId (Clerk user id string)
+      const [template, merchant] = await Promise.all([
+        CardTemplate.findOne({ merchantId: card.merchantId }).lean(),
+        // IMPORTANT: card.merchantId is Clerk ID (e.g. "user_..."), not Mongo ObjectId
+        Merchant.findOne({ merchantId: card.merchantId }).lean(),
+      ]);
+
+      if (!merchant) {
+        request.log?.warn?.(
+          { cardId: String(card._id), merchantId: String(card.merchantId) },
+          "[APPLE_WALLET] merchant not found"
+        );
+        return reply.code(404).send({ ok: false, message: "Merchant not found" });
       }
 
       if (!publicPayload.redeemCode?.code && !Number.isFinite(publicPayload.stamps)) {
