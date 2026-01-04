@@ -212,6 +212,8 @@ function normalizeAppleWallet(template) {
     layoutIn.auxiliarySlotIds,
     ["websiteUrl", "openingHours", "tier", "email"]
   );
+  const secondarySlotIds = secondarySlots.map((slot) => slot.fieldId);
+  const auxiliarySlotIds = auxiliarySlots.map((slot) => slot.fieldId);
 
   return {
     enabled,
@@ -231,7 +233,9 @@ function normalizeAppleWallet(template) {
     layout: {
       primarySource,
       secondarySlots,
+      secondarySlotIds,
       auxiliarySlots,
+      auxiliarySlotIds,
     },
   };
 }

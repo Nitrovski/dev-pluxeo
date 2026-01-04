@@ -20,6 +20,15 @@ const GenericLayoutRowSchema = new Schema(
   { _id: false }
 );
 
+const AppleLayoutSlotSchema = new Schema(
+  {
+    fieldId: { type: String, default: null },
+    label: { type: String, default: null },
+    showLabel: { type: Boolean },
+  },
+  { _id: false }
+);
+
 const AppleWalletSchema = new Schema(
   {
     enabled: { type: Boolean, default: true },
@@ -38,7 +47,20 @@ const AppleWalletSchema = new Schema(
     },
     layout: {
       primarySource: { type: String, enum: ["header", "programName", "none"], default: "header" },
+      secondarySlots: {
+        type: [AppleLayoutSlotSchema],
+        default: [{ fieldId: "stamps" }, { fieldId: "rewards" }],
+      },
       secondarySlotIds: { type: [String], default: ["stamps", "rewards"] },
+      auxiliarySlots: {
+        type: [AppleLayoutSlotSchema],
+        default: [
+          { fieldId: "websiteUrl" },
+          { fieldId: "openingHours" },
+          { fieldId: "tier" },
+          { fieldId: "email" },
+        ],
+      },
       auxiliarySlotIds: {
         type: [String],
         default: ["websiteUrl", "openingHours", "tier", "email"],
