@@ -1,6 +1,6 @@
 import { Card } from "../../models/card.model.js";
 import { CardTemplate } from "../../models/cardTemplate.model.js";
-import { Merchant } from "../../models/merchant.model.js";
+import { Customer } from "../../models/customer.model.js";
 import { buildPublicCardPayload } from "../../lib/publicPayload.js";
 import { buildApplePkpassBuffer } from "../../lib/apple/appleWallet.pass.js";
 import { getAppleWalletConfig } from "../../lib/apple/appleWallet.config.js";
@@ -55,19 +55,40 @@ export default async function publicAppleWalletRoutes(fastify) {
         return reply.code(404).send({ ok: false, message: "Card not found" });
       }
 
-      // Load template + merchant using merchantId (Clerk user id string)
-      const [template, merchant] = await Promise.all([
-        CardTemplate.findOne({ merchantId: card.merchantId }).lean(),
-        // IMPORTANT: card.merchantId is Clerk ID (e.g. "user_..."), not Mongo ObjectId
-        Merchant.findOne({ merchantId: card.merchantId }).lean(),
+      // Template (global per merchant)
+      const templatePromise = CardTemplate.findOne({
+        merchantId: card.merchantId,
+      }).lean();
+
+      // Merchant profile lives in Customer collection (onboarding entity)
+      const merchantProfilePromise = Customer.findOne({
+        merchantId: card.merchantId,
+        onboardingCompleted: true,
+      }).lean();
+
+      const [template, merchantProfile] = await Promise.all([
+        templatePromise,
+        merchantProfilePromise,
       ]);
 
-      if (!merchant) {
+      if (!template) {
         request.log?.warn?.(
           { cardId: String(card._id), merchantId: String(card.merchantId) },
-          "[APPLE_WALLET] merchant not found"
+          "[APPLE_WALLET] template not found for merchant"
         );
-        return reply.code(404).send({ ok: false, message: "Merchant not found" });
+        return reply
+          .code(404)
+          .send({ ok: false, message: "Card template not found for merchant" });
+      }
+
+      if (!merchantProfile) {
+        request.log?.warn?.(
+          { cardId: String(card._id), merchantId: String(card.merchantId) },
+          "[APPLE_WALLET] merchant profile not found"
+        );
+        return reply
+          .code(404)
+          .send({ ok: false, message: "Merchant not found" });
       }
 
       if (!publicPayload.redeemCode?.code && !Number.isFinite(publicPayload.stamps)) {
@@ -77,12 +98,13 @@ export default async function publicAppleWalletRoutes(fastify) {
         );
       }
 
+      // Pass "merchant" as merchantProfile to avoid changing builder signature
       const pkpassBuffer = await buildApplePkpassBuffer({
         card,
         publicPayload,
         walletToken,
         template,
-        merchant,
+        merchant: merchantProfile,
         logger: request.log,
       });
 
