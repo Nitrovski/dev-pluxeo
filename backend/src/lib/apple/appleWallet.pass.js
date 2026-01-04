@@ -158,6 +158,12 @@ function normalizeAppleWallet(template) {
   const style =
     appleIn.style === "generic" || appleIn.style === "storeCard" ? appleIn.style : "storeCard";
   const primaryFieldId = typeof layoutIn.primaryFieldId === "string" ? layoutIn.primaryFieldId : "";
+  const primarySlotIds = Array.isArray(layoutIn.primarySlotIds)
+    ? layoutIn.primarySlotIds.filter((slot) => typeof slot === "string")
+    : [];
+  if (primaryFieldId && primarySlotIds.length === 0) {
+    primarySlotIds.push(primaryFieldId);
+  }
   const primarySource =
     layoutIn.primarySource === "programName" ||
     layoutIn.primarySource === "none" ||
@@ -167,10 +173,23 @@ function normalizeAppleWallet(template) {
 
   const secondarySlotIds = Array.isArray(layoutIn.secondarySlotIds)
     ? layoutIn.secondarySlotIds.filter((slot) => typeof slot === "string")
-    : ["stamps", "rewards"];
+    : [];
   const auxiliarySlotIds = Array.isArray(layoutIn.auxiliarySlotIds)
     ? layoutIn.auxiliarySlotIds.filter((slot) => typeof slot === "string")
-    : ["websiteUrl", "openingHours", "tier", "email"];
+    : [];
+  const maxLayout = isObj(layoutIn.max) ? layoutIn.max : null;
+  const hasMax =
+    maxLayout &&
+    (Number.isFinite(maxLayout.primary) ||
+      Number.isFinite(maxLayout.secondary) ||
+      Number.isFinite(maxLayout.auxiliary));
+  const max = hasMax
+    ? {
+        ...(Number.isFinite(maxLayout.primary) ? { primary: maxLayout.primary } : {}),
+        ...(Number.isFinite(maxLayout.secondary) ? { secondary: maxLayout.secondary } : {}),
+        ...(Number.isFinite(maxLayout.auxiliary) ? { auxiliary: maxLayout.auxiliary } : {}),
+      }
+    : null;
 
   return {
     enabled,
@@ -189,9 +208,11 @@ function normalizeAppleWallet(template) {
     },
     layout: {
       primaryFieldId,
+      primarySlotIds,
       primarySource,
       secondarySlotIds,
       auxiliarySlotIds,
+      ...(max ? { max } : {}),
     },
   };
 }
@@ -203,11 +224,10 @@ function truncateAppleText(value, maxLength = 40) {
   return `${text.slice(0, maxLength - 1)}…`;
 }
 
-function toHostname(value) {
+function toWebsiteDisplay(value) {
   const safe = String(value || "").trim();
   if (!safe) return "";
-  const stripped = safe.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
-  return stripped.split("/")[0] || "";
+  return safe.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
 }
 
 function resolveAppleFieldValue(fieldId, { publicPayload, template }) {
@@ -215,6 +235,12 @@ function resolveAppleFieldValue(fieldId, { publicPayload, template }) {
   if (!trimmedId) return null;
 
   switch (trimmedId) {
+    case "programName": {
+      const googleHeader = normalizeHeaderText(template?.wallet?.google?.headerText);
+      const programValue = pickString(googleHeader || template?.programName, "");
+      if (!programValue) return null;
+      return { label: "PROGRAM", value: programValue };
+    }
     case "stamps": {
       const stampsCount = Number(publicPayload?.stamps || 0);
       const freeStamps =
@@ -231,9 +257,9 @@ function resolveAppleFieldValue(fieldId, { publicPayload, template }) {
       return { label: "REWARDS", value: String(rewardsCount) };
     }
     case "websiteUrl": {
-      const hostname = toHostname(template?.websiteUrl);
-      if (!hostname) return null;
-      return { label: "WEB", value: hostname };
+      const websiteDisplay = toWebsiteDisplay(template?.websiteUrl);
+      if (!websiteDisplay) return null;
+      return { label: "WEB", value: websiteDisplay };
     }
     case "openingHours": {
       const value = String(template?.openingHours || "").trim();
@@ -279,6 +305,27 @@ function buildSlotField({ fieldId, field, fieldKeyPrefix }) {
     label: field.label,
     value: trimmedValue,
   };
+}
+
+function buildFieldsFromIds({ fieldIds, max, usedFieldIds, fieldKeyPrefix, template, publicPayload }) {
+  const fields = [];
+  for (const slotId of fieldIds) {
+    if (fields.length >= max) break;
+    if (usedFieldIds.has(slotId)) continue;
+    const resolvedField = resolveAppleFieldValue(slotId, {
+      template,
+      publicPayload,
+    });
+    const field = buildSlotField({
+      fieldId: slotId,
+      field: resolvedField,
+      fieldKeyPrefix,
+    });
+    if (!field) continue;
+    fields.push(field);
+    usedFieldIds.add(slotId);
+  }
+  return fields;
 }
 
 async function fetchImageBuffer(url, logger) {
@@ -358,7 +405,6 @@ export async function buildApplePkpassBuffer({
     const programName = pickString(templateInput.programName, "");
     const headline = pickString(templateInput.headline, "");
     const subheadline = pickString(templateInput.subheadline, "");
-    const merchantName = pickString(merchant?.name, "");
 
     const logoText = walletApple.logoText;
 
@@ -379,80 +425,55 @@ export async function buildApplePkpassBuffer({
     const auxiliaryFields = [];
     const usedFieldIds = new Set();
 
-    if (walletApple.layout.primaryFieldId) {
-      const resolvedPrimary = resolveAppleFieldValue(walletApple.layout.primaryFieldId, {
-        template: templateInput,
-        publicPayload,
-      });
-      const primaryField = buildSlotField({
-        fieldId: walletApple.layout.primaryFieldId,
-        field: resolvedPrimary,
-        fieldKeyPrefix: "primary",
-      });
-      if (primaryField) {
-        primaryFields.push(primaryField);
-        usedFieldIds.add(walletApple.layout.primaryFieldId);
+    const primaryFieldIds = (() => {
+      if (walletApple.layout.primarySlotIds?.length) {
+        return walletApple.layout.primarySlotIds;
       }
-    } else if (walletApple.layout.primarySource === "header") {
-      const resolvedPrimary = resolveAppleFieldValue("stamps", {
-        template: templateInput,
-        publicPayload,
-      });
-      const primaryField = buildSlotField({
-        fieldId: "stamps",
-        field: resolvedPrimary,
-        fieldKeyPrefix: "primary",
-      });
-      if (primaryField) {
-        primaryFields.push(primaryField);
-        usedFieldIds.add("stamps");
+      if (walletApple.layout.primaryFieldId) {
+        return [walletApple.layout.primaryFieldId];
       }
-    } else if (walletApple.layout.primarySource === "programName") {
-      const programValue =
-        programName || normalizeHeaderText(walletGoogle.headerText) || merchantName;
-      if (programValue) {
-        primaryFields.push({
-          key: "primary_program",
-          label: "PROGRAM",
-          value: programValue,
-        });
-        usedFieldIds.add("programName");
+      if (walletApple.layout.primarySource) {
+        if (walletApple.layout.primarySource === "header") return ["stamps"];
+        if (walletApple.layout.primarySource === "programName") return ["programName"];
+        if (walletApple.layout.primarySource === "none") return [];
       }
-    }
+      return ["stamps"];
+    })();
 
-    for (const slotId of walletApple.layout.secondarySlotIds) {
-      if (usedFieldIds.has(slotId) || secondaryFields.length >= 2) continue;
-      const resolvedField = resolveAppleFieldValue(slotId, {
+    const maxPrimary = walletApple.layout.max?.primary ?? 2;
+    const maxSecondary = walletApple.layout.max?.secondary ?? 4;
+    const maxAuxiliary = walletApple.layout.max?.auxiliary ?? 4;
+
+    primaryFields.push(
+      ...buildFieldsFromIds({
+        fieldIds: primaryFieldIds,
+        max: maxPrimary,
+        usedFieldIds,
+        fieldKeyPrefix: "primary",
         template: templateInput,
         publicPayload,
-      });
-      const field = buildSlotField({
-        fieldId: slotId,
-        field: resolvedField,
+      })
+    );
+    secondaryFields.push(
+      ...buildFieldsFromIds({
+        fieldIds: walletApple.layout.secondarySlotIds,
+        max: maxSecondary,
+        usedFieldIds,
         fieldKeyPrefix: "secondary",
-      });
-      if (field) {
-        secondaryFields.push(field);
-        usedFieldIds.add(slotId);
-      }
-    }
-
-    for (const slotId of walletApple.layout.auxiliarySlotIds) {
-      if (usedFieldIds.has(slotId) || auxiliaryFields.length >= 2) continue;
-      const resolvedField = resolveAppleFieldValue(slotId, {
         template: templateInput,
         publicPayload,
-      });
-      const field = buildSlotField({
-        fieldId: slotId,
-        field: resolvedField,
+      })
+    );
+    auxiliaryFields.push(
+      ...buildFieldsFromIds({
+        fieldIds: walletApple.layout.auxiliarySlotIds,
+        max: maxAuxiliary,
+        usedFieldIds,
         fieldKeyPrefix: "aux",
-      });
-      if (field) {
-        auxiliaryFields.push(field);
-        usedFieldIds.add(slotId);
-      }
-    }
+        template: templateInput,
+        publicPayload,
+      })
+    );
 
     const backFields = buildBackFields({ template: templateInput });
 
