@@ -42,32 +42,22 @@ function toRgbString(hex) {
 }
 
 function buildBackFields({ template }) {
+  const promoText = String(template?.promoText ?? "").trim();
   const detailsText = String(template?.detailsText ?? "").trim();
   const termsText = String(template?.termsText ?? "").trim();
-  const promoText = String(template?.promoText ?? "").trim();
-  const websiteUrl = String(template?.websiteUrl ?? "").trim();
-  const openingHours = String(template?.openingHours ?? "").trim();
 
   const fields = [];
 
+  if (promoText) {
+    fields.push({ key: "latest_news", label: "LATEST NEWS", value: promoText });
+  }
+
   if (detailsText) {
-    fields.push({ key: "details", label: "Details", value: detailsText });
+    fields.push({ key: "how_to_use", label: "HOW TO USE", value: detailsText });
   }
 
   if (termsText) {
-    fields.push({ key: "terms", label: "Terms", value: termsText });
-  }
-
-  if (promoText) {
-    fields.push({ key: "promo", label: "Promo", value: promoText });
-  }
-
-  if (websiteUrl) {
-    fields.push({ key: "website", label: "Web", value: websiteUrl });
-  }
-
-  if (openingHours) {
-    fields.push({ key: "hours", label: "Hours", value: openingHours });
+    fields.push({ key: "terms", label: "TERMS", value: termsText });
   }
 
   return fields;
@@ -167,6 +157,7 @@ function normalizeAppleWallet(template) {
   const enabled = appleIn.enabled !== undefined ? Boolean(appleIn.enabled) : true;
   const style =
     appleIn.style === "generic" || appleIn.style === "storeCard" ? appleIn.style : "storeCard";
+  const primaryFieldId = typeof layoutIn.primaryFieldId === "string" ? layoutIn.primaryFieldId : "";
   const primarySource =
     layoutIn.primarySource === "programName" ||
     layoutIn.primarySource === "none" ||
@@ -197,6 +188,7 @@ function normalizeAppleWallet(template) {
       stripUrl,
     },
     layout: {
+      primaryFieldId,
       primarySource,
       secondarySlotIds,
       auxiliarySlotIds,
@@ -204,46 +196,60 @@ function normalizeAppleWallet(template) {
   };
 }
 
-function extractFirstUrl(text) {
-  const content = String(text || "");
-  const match = content.match(/https?:\/\/[^\s)]+/i);
-  if (match) return match[0];
-  const wwwMatch = content.match(/www\.[^\s)]+/i);
-  return wwwMatch ? `https://${wwwMatch[0]}` : "";
+function truncateAppleText(value, maxLength = 40) {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength - 1)}…`;
 }
 
-function resolveAppleFieldValue({ fieldId, card, template, publicPayload }) {
-  switch (fieldId) {
+function toHostname(value) {
+  const safe = String(value || "").trim();
+  if (!safe) return "";
+  const stripped = safe.replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+  return stripped.split("/")[0] || "";
+}
+
+function resolveAppleFieldValue(fieldId, { publicPayload, template }) {
+  const trimmedId = String(fieldId || "").trim();
+  if (!trimmedId) return null;
+
+  switch (trimmedId) {
     case "stamps": {
-      const stampsCount = Number.isFinite(card?.stamps)
-        ? card.stamps
-        : Number(publicPayload?.stamps || 0);
-      const freeStamps = Number(template?.freeStampsToReward || 0);
-      if (Number.isFinite(stampsCount) && Number.isFinite(freeStamps) && freeStamps > 0) {
-        return `${stampsCount}/${freeStamps}`;
+      const stampsCount = Number(publicPayload?.stamps || 0);
+      const freeStamps =
+        Number(template?.freeStampsToReward || template?.rules?.freeStampsToReward || 0);
+      if (!Number.isFinite(stampsCount)) return null;
+      if (Number.isFinite(freeStamps) && freeStamps > 0) {
+        return { label: "STAMPS", value: `${stampsCount}/${freeStamps}` };
       }
-      if (Number.isFinite(stampsCount)) {
-        return String(stampsCount);
-      }
-      return null;
+      return { label: "STAMPS", value: String(stampsCount) };
     }
     case "rewards": {
-      const rewardsCount = Number.isFinite(card?.rewards)
-        ? card.rewards
-        : Number(publicPayload?.rewards || 0);
+      const rewardsCount = Number(publicPayload?.rewards || 0);
       if (!Number.isFinite(rewardsCount)) return null;
-      if (rewardsCount > 0) return "Available";
-      return String(rewardsCount);
+      return { label: "REWARDS", value: String(rewardsCount) };
     }
-    case "websiteUrl":
-      return (
-        String(template?.websiteUrl || "").trim() ||
-        extractFirstUrl(template?.detailsText)
-      );
-    case "openingHours":
-      return String(template?.openingHours || "").trim() || null;
-    case "promo":
-      return String(template?.promoText || "").trim() || null;
+    case "websiteUrl": {
+      const hostname = toHostname(template?.websiteUrl);
+      if (!hostname) return null;
+      return { label: "WEB", value: hostname };
+    }
+    case "openingHours": {
+      const value = String(template?.openingHours || "").trim();
+      if (!value) return null;
+      return { label: "HOURS", value };
+    }
+    case "customMessage": {
+      const value = truncateAppleText(template?.customMessage);
+      if (!value) return null;
+      return { label: "MESSAGE", value };
+    }
+    case "promoText": {
+      const value = truncateAppleText(template?.promoText);
+      if (!value) return null;
+      return { label: "NEWS", value };
+    }
     default:
       return null;
   }
@@ -264,20 +270,13 @@ function resolveBarcodeFormat({ redeemFormat, barcodeType }) {
   return "PKBarcodeFormatQR";
 }
 
-function buildSlotField({ slotId, value, labelPrefix, fieldKeyPrefix }) {
-  const trimmedValue = String(value || "").trim();
+function buildSlotField({ fieldId, field, fieldKeyPrefix }) {
+  if (!field) return null;
+  const trimmedValue = String(field.value || "").trim();
   if (!trimmedValue) return null;
-
-  const labelMap = {
-    stamps: "Stamps",
-    rewards: "Rewards",
-    websiteUrl: "Web",
-    openingHours: "Hours",
-  };
-
   return {
-    key: `${fieldKeyPrefix}_${slotId}`,
-    label: labelMap[slotId] || labelPrefix,
+    key: `${fieldKeyPrefix}_${fieldId}`,
+    label: field.label,
     value: trimmedValue,
   };
 }
@@ -375,56 +374,84 @@ export async function buildApplePkpassBuffer({
       programName || headline || "Pluxeo Wallet Pass";
     const organizationName = walletApple.issuerName || "Pluxeo";
 
-    const headerValue =
-      headline ||
-      subheadline ||
-      programName ||
-      normalizeHeaderText(walletGoogle.headerText) ||
-      merchantName;
-
     const primaryFields = [];
-    if (walletApple.layout.primarySource === "header" && headerValue) {
-      primaryFields.push({ key: "primary_header", label: "Program", value: headerValue });
+    const secondaryFields = [];
+    const auxiliaryFields = [];
+    const usedFieldIds = new Set();
+
+    if (walletApple.layout.primaryFieldId) {
+      const resolvedPrimary = resolveAppleFieldValue(walletApple.layout.primaryFieldId, {
+        template: templateInput,
+        publicPayload,
+      });
+      const primaryField = buildSlotField({
+        fieldId: walletApple.layout.primaryFieldId,
+        field: resolvedPrimary,
+        fieldKeyPrefix: "primary",
+      });
+      if (primaryField) {
+        primaryFields.push(primaryField);
+        usedFieldIds.add(walletApple.layout.primaryFieldId);
+      }
+    } else if (walletApple.layout.primarySource === "header") {
+      const resolvedPrimary = resolveAppleFieldValue("stamps", {
+        template: templateInput,
+        publicPayload,
+      });
+      const primaryField = buildSlotField({
+        fieldId: "stamps",
+        field: resolvedPrimary,
+        fieldKeyPrefix: "primary",
+      });
+      if (primaryField) {
+        primaryFields.push(primaryField);
+        usedFieldIds.add("stamps");
+      }
     } else if (walletApple.layout.primarySource === "programName") {
-      const programValue = programName || merchantName;
+      const programValue =
+        programName || normalizeHeaderText(walletGoogle.headerText) || merchantName;
       if (programValue) {
-        primaryFields.push({ key: "primary_program", label: "Program", value: programValue });
+        primaryFields.push({
+          key: "primary_program",
+          label: "PROGRAM",
+          value: programValue,
+        });
+        usedFieldIds.add("programName");
       }
     }
 
-    const secondaryFields = [];
-    const auxiliaryFields = [];
-
     for (const slotId of walletApple.layout.secondarySlotIds) {
-      const resolvedValue = resolveAppleFieldValue({
-        fieldId: slotId,
-        card,
+      if (usedFieldIds.has(slotId) || secondaryFields.length >= 2) continue;
+      const resolvedField = resolveAppleFieldValue(slotId, {
         template: templateInput,
         publicPayload,
       });
       const field = buildSlotField({
-        slotId,
-        value: resolvedValue,
-        labelPrefix: "Info",
+        fieldId: slotId,
+        field: resolvedField,
         fieldKeyPrefix: "secondary",
       });
-      if (field) secondaryFields.push(field);
+      if (field) {
+        secondaryFields.push(field);
+        usedFieldIds.add(slotId);
+      }
     }
 
     for (const slotId of walletApple.layout.auxiliarySlotIds) {
-      const resolvedValue = resolveAppleFieldValue({
-        fieldId: slotId,
-        card,
+      if (usedFieldIds.has(slotId) || auxiliaryFields.length >= 2) continue;
+      const resolvedField = resolveAppleFieldValue(slotId, {
         template: templateInput,
         publicPayload,
       });
       const field = buildSlotField({
-        slotId,
-        value: resolvedValue,
-        labelPrefix: "Info",
+        fieldId: slotId,
+        field: resolvedField,
         fieldKeyPrefix: "aux",
       });
-      if (field) auxiliaryFields.push(field);
+      if (field) {
+        auxiliaryFields.push(field);
+        usedFieldIds.add(slotId);
+      }
     }
 
     const backFields = buildBackFields({ template: templateInput });
