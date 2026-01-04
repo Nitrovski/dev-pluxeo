@@ -219,13 +219,11 @@ function resolveAppleFieldValue(fieldId, { publicPayload, template }) {
       const stampsCount = Number(publicPayload?.stamps || 0);
       const freeStamps =
         Number(template?.freeStampsToReward || template?.rules?.freeStampsToReward || 0);
-      if (Number.isFinite(stampsCount) && Number.isFinite(freeStamps) && freeStamps > 0) {
+      if (!Number.isFinite(stampsCount)) return null;
+      if (Number.isFinite(freeStamps) && freeStamps > 0) {
         return { label: "STAMPS", value: `${stampsCount}/${freeStamps}` };
       }
-      if (Number.isFinite(stampsCount) && stampsCount > 0) {
-        return { label: "STAMPS", value: String(stampsCount) };
-      }
-      return null;
+      return { label: "STAMPS", value: String(stampsCount) };
     }
     case "rewards": {
       const rewardsCount = Number(publicPayload?.rewards || 0);
